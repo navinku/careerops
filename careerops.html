@@ -149,6 +149,10 @@
   a.link{color:var(--teal);text-decoration:none;}
   a.link:hover{text-decoration:underline;}
 
+  .portal-item{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);margin-bottom:12px;flex-wrap:wrap;}
+  .portal-item .portal-name{font-size:14px;font-weight:600;color:var(--text);margin:0;}
+  .portal-item .portal-meta{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.5;}
+
   .upload-zone{border:1.5px dashed var(--line);border-radius:8px;padding:22px;text-align:center;cursor:pointer;
     background:var(--panel-2);font-size:13px;color:var(--muted);transition:.15s;}
   .upload-zone:hover, .upload-zone.dragover{border-color:var(--teal);color:var(--text);background:rgba(45,212,191,.05);}
@@ -286,7 +290,8 @@
     <button class="tab active" data-view="deploy"><span class="idx">01</span>Deploy</button>
     <button class="tab" data-view="pipeline"><span class="idx">02</span>Pipeline</button>
     <button class="tab" data-view="runbook"><span class="idx">03</span>Runbook</button>
-    <button class="tab" data-view="profile"><span class="idx">04</span>Base Profile</button>
+    <button class="tab" data-view="portals"><span class="idx">04</span>Job Portals</button>
+    <button class="tab" data-view="profile"><span class="idx">05</span>Base Profile</button>
     <button class="tab" data-view="settings" style="margin-left:auto;"><span class="idx">⚙</span></button>
   </div>
 
@@ -471,6 +476,42 @@
         <select id="qFilterSelect" style="width:auto;font-family:var(--mono);font-size:11.5px;"><option value="">all roles</option></select>
       </div>
       <div id="questionsWrap"></div>
+    </div>
+  </div>
+
+  <!-- JOB PORTALS VIEW -->
+  <div class="view" id="view-portals">
+    <h2 class="view-title">Job portals</h2>
+    <p class="view-desc">Keep the login details for each portal in one place so you can jump straight back in when applying.</p>
+
+    <div class="panel">
+      <div class="panel-title">Add a portal</div>
+      <div class="row">
+        <div class="field">
+          <label>Portal name</label>
+          <input type="text" id="portalName" placeholder="e.g. LinkedIn">
+        </div>
+        <div class="field">
+          <label>My username / email</label>
+          <input type="text" id="portalUsername" placeholder="your.username or email">
+        </div>
+      </div>
+      <div class="field">
+        <label>Login URL</label>
+        <input type="url" id="portalUrl" placeholder="https://www.linkedin.com/login">
+      </div>
+      <div class="field">
+        <label>Notes (optional)</label>
+        <input type="text" id="portalNotes" placeholder="e.g. recruiter portal, same account as Workday">
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" id="addPortalBtn">Add portal</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Saved portals</div>
+      <div id="jobPortalsList"></div>
     </div>
   </div>
 
@@ -882,6 +923,7 @@ async function init(){
   renderPipeline();
   renderRunbookSelectors();
   renderQuestions();
+  renderJobPortals();
 
   document.querySelectorAll('.tab').forEach(t=>{
     t.addEventListener('click', ()=>{
@@ -891,6 +933,7 @@ async function init(){
       document.getElementById('view-'+t.dataset.view).classList.add('active');
       if(t.dataset.view === 'pipeline') renderPipeline();
       if(t.dataset.view === 'runbook'){ renderRunbookSelectors(); renderQuestions(); }
+      if(t.dataset.view === 'portals') renderJobPortals();
       if(t.dataset.view === 'settings') checkHealth();
     });
   });
@@ -903,6 +946,163 @@ function updateProfileStatus(){
   const el = document.getElementById('profileStatus');
   el.textContent = baseCv.trim() ? 'base profile loaded' : 'base profile not set';
 }
+
+// ---------- JOB PORTALS ----------
+function getJobPortalsKey(){
+  return `job-portals:${storageUserId()}`;
+}
+
+function getDefaultJobPortals(){
+  return [
+    { id: 'linkedin', name: 'LinkedIn', username: 'your.linkedin.handle', url: 'https://www.linkedin.com/login', notes: 'Primary networking and applications' },
+    { id: 'indeed', name: 'Indeed', username: 'your.email@example.com', url: 'https://secure.indeed.com/account/login', notes: 'Job search and direct applications' },
+    { id: 'wellfound', name: 'Wellfound', username: 'your.username', url: 'https://wellfound.com/login', notes: 'Startup roles' },
+    { id: 'greenhouse', name: 'Greenhouse', username: 'your.email@example.com', url: 'https://boards.greenhouse.io/signin', notes: 'Company-specific applications' }
+  ];
+}
+
+async function loadJobPortals(){
+  const key = getJobPortalsKey();
+  try{
+    const saved = await apiRequest(`/api/job-portals?userId=${encodeURIComponent(storageUserId())}`);
+    if(Array.isArray(saved) && saved.length){
+      localStorage.setItem(key, JSON.stringify(saved));
+      return saved;
+    }
+  }catch(e){
+    console.warn('Job portals backend unavailable, falling back to local storage', e);
+  }
+
+  try{
+    const saved = JSON.parse(localStorage.getItem(key) || 'null');
+    if(Array.isArray(saved) && saved.length){
+      return saved;
+    }
+  }catch(e){
+    console.error('Failed to load job portals', e);
+  }
+
+  const defaults = getDefaultJobPortals();
+  localStorage.setItem(key, JSON.stringify(defaults));
+  return defaults;
+}
+
+async function saveJobPortals(portals){
+  localStorage.setItem(getJobPortalsKey(), JSON.stringify(portals));
+  try{
+    await Promise.all(portals.map(portal => {
+      if(!portal || !portal.name || !portal.username || !portal.url) return Promise.resolve();
+      return apiRequest('/api/job-portals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...portal,
+          userId: storageUserId()
+        })
+      });
+    }));
+  }catch(e){
+    console.warn('Could not sync job portals to backend', e);
+  }
+}
+
+async function renderJobPortals(){
+  const list = document.getElementById('jobPortalsList');
+  if(!list) return;
+
+  const portals = await loadJobPortals();
+  if(!portals.length){
+    list.innerHTML = '<div class="empty"><div class="glyph">+</div><div>No job portals saved yet. Add one above.</div></div>';
+    return;
+  }
+
+  list.innerHTML = portals.map(portal => {
+    const loginUrl = (portal.url || '').trim();
+    const portalLabel = portal.name || 'Portal';
+    const username = portal.username || '—';
+    const notes = portal.notes ? `<div class="portal-meta">${escapeHtml(portal.notes)}</div>` : '';
+    const loginButton = loginUrl
+      ? `<a class="btn ghost" href="${escapeAttr(loginUrl)}" target="_blank" rel="noreferrer" style="font-size:11px;padding:6px 10px;">Open login</a>`
+      : '<span class="btn ghost" style="font-size:11px;padding:6px 10px;opacity:.5;cursor:not-allowed;">No link</span>';
+
+    return `
+      <div class="portal-item">
+        <div style="flex:1;min-width:220px;">
+          <p class="portal-name">${escapeHtml(portalLabel)}</p>
+          <div class="portal-meta">Username: ${escapeHtml(username)}</div>
+          ${notes}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          ${loginButton}
+          <button class="btn ghost" data-portal-id="${escapeAttr(portal.id)}" style="font-size:11px;padding:6px 8px;color:var(--red);">Delete</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('[data-portal-id]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const portalId = button.getAttribute('data-portal-id');
+      const nextPortals = (await loadJobPortals()).filter(portal => portal.id !== portalId);
+      try{
+        await apiRequest(`/api/job-portals/${encodeURIComponent(portalId)}?userId=${encodeURIComponent(storageUserId())}`, {
+          method: 'DELETE'
+        });
+      }catch(e){
+        console.warn('Delete portal from backend failed', e);
+      }
+      saveJobPortals(nextPortals);
+      renderJobPortals();
+      toast('Portal removed');
+    });
+  });
+}
+
+document.getElementById('addPortalBtn').addEventListener('click', async ()=>{
+  const name = document.getElementById('portalName').value.trim();
+  const username = document.getElementById('portalUsername').value.trim();
+  const url = document.getElementById('portalUrl').value.trim();
+  const notes = document.getElementById('portalNotes').value.trim();
+
+  if(!name || !username || !url){
+    toast('Portal name, username, and login URL are required.', true);
+    return;
+  }
+
+  const portal = {
+    id: uid(),
+    name,
+    username,
+    url,
+    notes
+  };
+
+  try{
+    await apiRequest('/api/job-portals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...portal, userId: storageUserId() })
+    });
+  }catch(e){
+    console.warn('Portal save to backend failed; saving locally', e);
+    const portals = await loadJobPortals();
+    portals.push(portal);
+    await saveJobPortals(portals);
+  }
+
+  const portals = await loadJobPortals();
+  if(!portals.some(p => p.id === portal.id)) {
+    portals.push(portal);
+    await saveJobPortals(portals);
+  }
+
+  renderJobPortals();
+  document.getElementById('portalName').value = '';
+  document.getElementById('portalUsername').value = '';
+  document.getElementById('portalUrl').value = '';
+  document.getElementById('portalNotes').value = '';
+  toast('Portal saved');
+});
 
 // ---------- SETTINGS VIEW (Secure Provider Management) ----------
 let savedProviders = [];
