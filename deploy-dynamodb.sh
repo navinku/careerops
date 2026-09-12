@@ -6,6 +6,8 @@
 # This script creates the DynamoDB tables used by CareerOps:
 # - applications
 # - runbook
+# - llm-providers
+# - job-portals
 #
 # Usage: ./deploy-dynamodb.sh [--region us-east-2]
 # ============================================================================
@@ -113,6 +115,7 @@ create_dynamodb_tables() {
     create_table "applications" "ApplicationTracking"
     create_table "runbook" "InterviewRunbook"
     create_table "llm-providers" "LLMProviderConfiguration"
+    create_table "job-portals" "JobPortalCredentials"
     log_success "DynamoDB tables ready"
 }
 
@@ -122,7 +125,7 @@ verify_deployment() {
     local tables
     tables=$(aws dynamodb list-tables --region "$REGION" --query 'TableNames' --output text)
 
-    for table_name in applications runbook llm-providers; do
+    for table_name in applications runbook llm-providers job-portals; do
         if echo "$tables" | grep -q "$table_name"; then
             log_success "'$table_name' table found"
         else
@@ -141,6 +144,8 @@ ${GREEN}DynamoDB setup complete.${NC}
 Tables:
   - applications (userId HASH, id RANGE)
   - runbook (userId HASH, id RANGE)
+  - llm-providers (userId HASH, id RANGE)
+  - job-portals (userId HASH, id RANGE)
 
 Billing:
   - PAY_PER_REQUEST

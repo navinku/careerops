@@ -39,6 +39,7 @@ try:
     applications_table = dynamodb.Table('applications')
     runbook_table = dynamodb.Table('runbook')
     llm_providers_table = dynamodb.Table('llm-providers')
+    job_portals_table = dynamodb.Table('job-portals')
     DYNAMODB_AVAILABLE = True
 except Exception as e:
     print(f"⚠️  DynamoDB initialization failed: {e}")
@@ -1056,6 +1057,68 @@ def delete_question(question_id):
         runbook_table.delete_item(
             Key={'userId': user_id, 'id': question_id}
         )
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ========== JOB PORTALS API ==========
+
+@app.route('/api/job-portals', methods=['GET'])
+def get_job_portals():
+    """Get all job portal entries for a user."""
+    if not DYNAMODB_AVAILABLE:
+        return jsonify({'error': 'DynamoDB not available'}), 503
+
+    user_id = request.args.get('userId', 'default-user')
+    try:
+        response = job_portals_table.query(
+            KeyConditionExpression=Key('userId').eq(user_id)
+        )
+        items = json_safe(response.get('Items', []))
+        return jsonify(sorted(items, key=lambda x: x.get('name', '').lower()))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/job-portals', methods=['POST'])
+def create_job_portal():
+    """Create or update a job portal entry."""
+    if not DYNAMODB_AVAILABLE:
+        return jsonify({'error': 'DynamoDB not available'}), 503
+
+    try:
+        data = request.json or {}
+        user_id = data.get('userId', 'default-user')
+        portal_id = data.get('id') or f"portal-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
+
+        item = {
+            'userId': user_id,
+            'id': portal_id,
+            'name': data.get('name', '').strip(),
+            'username': data.get('username', '').strip(),
+            'url': data.get('url', '').strip(),
+            'notes': data.get('notes', '').strip(),
+            'updatedAt': datetime.now(timezone.utc).isoformat()
+        }
+
+        if not item['name'] or not item['username'] or not item['url']:
+            return jsonify({'error': 'Portal name, username, and login URL are required'}), 400
+
+        job_portals_table.put_item(Item=dynamodb_safe(item))
+        return jsonify({'status': 'ok', 'id': portal_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/job-portals/<portal_id>', methods=['DELETE'])
+def delete_job_portal(portal_id):
+    """Delete a job portal entry."""
+    if not DYNAMODB_AVAILABLE:
+        return jsonify({'error': 'DynamoDB not available'}), 503
+
+    try:
+        user_id = request.args.get('userId', 'default-user')
+        job_portals_table.delete_item(Key={'userId': user_id, 'id': portal_id})
         return jsonify({'status': 'ok'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
