@@ -49,8 +49,5 @@ jobs:
           git remote remove gitlab >/dev/null 2>&1 || true
           git remote add gitlab "${REMOTE_URL}"
 
-          # Validate the remote can be reached before pushing.
-          git ls-remote --heads gitlab >/dev/null
-
-          # Push the current main branch to GitLab.
-          git push gitlab HEAD:main
+          git fetch gitlab main || true
+          git push --force-with-lease gitlab HEAD:main
