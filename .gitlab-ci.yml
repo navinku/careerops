@@ -19,12 +19,10 @@ build_and_push:
 
   before_script:
     - apk add --no-cache aws-cli
-    - aws sts get-caller-identity
     - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" |
         docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
   script:
-    - docker info
     - docker buildx build
         --platform linux/amd64
         --provenance=false
