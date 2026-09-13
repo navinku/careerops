@@ -236,10 +236,26 @@
   .cv-ats-section-header .sec-num{font-size:10px;font-weight:700;color:var(--teal);min-width:20px;}
   .cv-ats-section-header .sec-title{font-size:12px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.5px;}
   .cv-ats-section-header .sec-hint{font-size:10px;color:var(--muted);margin-left:auto;font-style:italic;}
-  .cv-comparison-legend{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;padding:0 12px;}
+  .cv-comparison-legend{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;padding:0 12px;position:sticky;top:0;z-index:3;background:var(--panel-2);}
   .cv-comparison-legend .legend-col{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:6px 8px;border-radius:4px;}
   .cv-comparison-legend .legend-col.left{color:var(--muted);border-top:2px solid var(--muted);background:var(--panel-2);}
   .cv-comparison-legend .legend-col.right{color:var(--teal);border-top:2px solid var(--teal);background:var(--panel-2);}
+  /* Sticky section header so context is retained while scrolling (spec §23) */
+  .cv-ats-section-header{position:sticky;top:36px;z-index:2;}
+  /* Status-badge state model (spec §4, §28): CHANGED / ADDED / REMOVED / UNCHANGED */
+  .cv-comparison-row .cat-badge.state{text-transform:uppercase;letter-spacing:.3px;}
+  .cv-comparison-row .cat-badge.state-changed{background:var(--teal);color:#000;}
+  .cv-comparison-row .cat-badge.state-added{background:var(--green);color:#000;}
+  .cv-comparison-row .cat-badge.state-removed{background:var(--red);color:#fff;}
+  .cv-comparison-row .cat-badge.state-unchanged{background:var(--muted);color:#fff;}
+  /* Mobile: stack Base → Recommended (spec §24). Do not force two narrow columns. */
+  @media(max-width:640px){
+    .cv-comparison-row{grid-template-columns:1fr;}
+    .cv-comparison-legend{display:none;}
+    .cv-comparison-col.original-col::before{content:"Base / Current CV";display:block;font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
+    .cv-comparison-col.suggested-col::before{content:"↓ Recommended (JD + ATS)";display:block;font-size:9px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
+    .cv-ats-section-header{top:0;}
+  }
 </style>
 </head>
 <body>
@@ -2102,9 +2118,9 @@ document.getElementById('rejectAllChangesBtn')?.addEventListener('click', ()=>{
 
 document.getElementById('smartAcceptBtn')?.addEventListener('click', ()=>{
   document.querySelectorAll('.cv-comparison-row.changed').forEach(row => {
-    const badge = row.querySelector('.cat-badge');
+    const badge = row.querySelector('.cat-badge.positive');
     const checkbox = row.querySelector('.comparison-checkbox');
-    if(badge && checkbox && badge.classList.contains('positive')){
+    if(badge && checkbox){
       checkbox.checked = true;
     }
   });
@@ -2461,7 +2477,22 @@ function renderBackendComparison(compareData){
     return;
   }
 
-  summary.innerHTML = `<strong>${total_changes}</strong> categor${total_changes === 1 ? 'y' : 'ies'} changed. Review and approve changes below.`;
+  // Change summary counts (spec §18): categories changed / added / removed / unchanged.
+  let cntChanged = 0, cntAdded = 0, cntRemoved = 0, cntUnchanged = 0;
+  for(const entry of Object.values(comparison)){
+    if(!entry || typeof entry !== 'object') continue;
+    const state = deriveChangeState(entry);
+    if(state === 'ADDED') cntAdded++;
+    else if(state === 'REMOVED') cntRemoved++;
+    else if(state === 'CHANGED') cntChanged++;
+    else cntUnchanged++;
+  }
+  const parts = [];
+  parts.push(`<strong>${cntChanged}</strong> changed`);
+  if(cntAdded) parts.push(`<strong>${cntAdded}</strong> added`);
+  if(cntRemoved) parts.push(`<strong>${cntRemoved}</strong> removed`);
+  parts.push(`<strong>${cntUnchanged}</strong> unchanged`);
+  summary.innerHTML = `${parts.join(' · ')} — review and approve recommendations below.`;
 
   // Render category rows
   let html = '';
@@ -2584,7 +2615,7 @@ function renderComparisonRow(key, label, entry){
     return `<div class="cv-comparison-row ${changedClass}" data-cat-key="${escapeHtml(key)}">
       <div class="cat-header">
         <span class="cat-name">${escapeHtml(label)}</span>
-        <span class="cat-badge neutral">unchanged</span>
+        <span class="cat-badge state state-unchanged">UNCHANGED</span>
       </div>
       <div class="cv-comparison-col original-col">
         <div class="cv-comparison-col-label">Base / Current CV</div>
@@ -2597,7 +2628,11 @@ function renderComparisonRow(key, label, entry){
     </div>`;
   }
 
-  // Changed category - show side-by-side with checkbox
+  // Changed category - show side-by-side with checkbox.
+  // State badge (spec §4/§28) is unambiguous: ADDED / REMOVED / CHANGED.
+  const state = deriveChangeState(entry);
+  const stateClass = 'state-' + state.toLowerCase();
+  // ATS impact badge is a secondary, explained numeric badge (not an ambiguous word).
   const badgeClass = score_impact > 0 ? 'positive' : score_impact < 0 ? 'negative' : 'neutral';
   const badgeText = score_impact > 0 ? `+${score_impact}` : score_impact < 0 ? `${score_impact}` : '±0';
 
@@ -2605,6 +2640,7 @@ function renderComparisonRow(key, label, entry){
     <div class="cat-header">
       <input type="checkbox" class="comparison-checkbox" data-cat-key="${escapeHtml(key)}">
       <span class="cat-name">${escapeHtml(label)}</span>
+      <span class="cat-badge state ${stateClass}">${state}</span>
       <span class="cat-badge ${badgeClass}">${badgeText} ATS</span>
     </div>
     <div class="cv-comparison-col original-col">
@@ -2616,6 +2652,16 @@ function renderComparisonRow(key, label, entry){
       ${escapeHtml(truncateForDisplay(suggested_content, 200))}
     </div>
   </div>`;
+}
+
+// Derive an unambiguous review state from content presence (spec §4/§28).
+function deriveChangeState(entry){
+  const hasBase = !!(entry.original_content && entry.original_content.trim());
+  const hasReco = !!(entry.suggested_content && entry.suggested_content.trim());
+  if(!entry.changed) return 'UNCHANGED';
+  if(!hasBase && hasReco) return 'ADDED';
+  if(hasBase && !hasReco) return 'REMOVED';
+  return 'CHANGED';
 }
 
 function truncateForDisplay(text, maxLen){
