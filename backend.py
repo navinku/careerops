@@ -954,6 +954,155 @@ class KeywordEvidenceEngine:
         }
 
 
+# ========== FINAL CV INTEGRITY GATE (gap-fix §20/§22) ==========
+
+
+class CVIntegrityValidator:
+    """Hard validation gate that blocks final-CV generation when the approved CV
+    loses source facts or leaks disallowed content (gap-fix §20).
+
+    Failure codes:
+        BASE_CV_ROLE_LOSS          — fewer roles / a dropped employer or title
+        BASE_CV_PROJECT_LOSS       — the Projects section shrank/disappeared
+        BASE_CV_CERTIFICATION_LOSS — a certification line disappeared
+        BASE_CV_EDUCATION_LOSS     — an education record disappeared
+        BASE_SKILL_OVERWRITE       — base skills no longer present in approved CV
+        UNSUPPORTED_TERM_LEAK      — an UNSUPPORTED requirement entered the CV
+        REVIEW_METADATA_LEAK       — review/ATS/version metadata entered the CV
+    """
+
+    # Words/phrases that belong to the review UI only and must never appear in a CV.
+    _METADATA_MARKERS = [
+        'ats match score', 'baseline score', 'max possible', 'supported coverage',
+        'unsupported keyword', 'why this change', 'smart accept', 'jd signal',
+        'review status', 'role_content_mismatch', 'score_impact',
+    ]
+
+    def __init__(self):
+        self._parser = CVParser()
+        self._evidence = KeywordEvidenceEngine()
+
+    # ---- structured fact extraction ----
+
+    def _roles(self, parsed):
+        pe = parsed.get('professional_experience')
+        if not isinstance(pe, dict):
+            return []
+        return pe.get('roles', []) or []
+
+    def _role_identity(self, role):
+        """A normalized identity string for a role: title + metadata (company/dates)."""
+        title = re.sub(r'^#{1,6}\s*', '', role.get('title', '') or '').replace('*', '').strip()
+        meta = (role.get('metadata', '') or '').replace('*', '').strip()
+        return f'{title} | {meta}'.lower()
+
+    def _lines(self, text):
+        out = []
+        for line in (text or '').split('\n'):
+            clean = re.sub(r'^#{1,6}\s*', '', line).strip()
+            clean = re.sub(r'^[-*]\s*', '', clean).replace('**', '').strip()
+            if clean:
+                out.append(clean)
+        return out
+
+    def _entity_lines(self, parsed, cat_key):
+        """Non-header content lines for a simple section (certs/education/projects)."""
+        val = parsed.get(cat_key)
+        if not val:
+            return []
+        lines = self._lines(val)
+        # Drop the section header line itself (e.g. "CERTIFICATIONS").
+        return [l for l in lines if l.upper() not in (
+            'CERTIFICATIONS', 'EDUCATION', 'SELECTED PROJECTS', 'PROJECTS')]
+
+    # ---- validation ----
+
+    def validate(self, base_markdown, approved_markdown, unsupported_terms=None):
+        """Validate approved CV against base CV. Returns {ok: bool, errors: [...]}"""
+        errors = []
+
+        try:
+            base = self._parser.parse(base_markdown)
+        except ParseError as e:
+            return {'ok': False, 'errors': [{'code': 'BASE_CV_UNPARSEABLE', 'detail': str(e)}]}
+        try:
+            approved = self._parser.parse(approved_markdown)
+        except ParseError as e:
+            return {'ok': False, 'errors': [{'code': 'APPROVED_CV_UNPARSEABLE', 'detail': str(e)}]}
+
+        approved_text_lower = approved_markdown.lower()
+
+        # 1) Role count + identity preservation.
+        base_roles = self._roles(base)
+        approved_roles = self._roles(approved)
+        if len(approved_roles) < len(base_roles):
+            errors.append({
+                'code': 'BASE_CV_ROLE_LOSS',
+                'detail': f'Base has {len(base_roles)} roles but approved CV has {len(approved_roles)}.',
+            })
+        # Each base employer/title identity must still be present somewhere.
+        approved_identities = ' \n '.join(self._role_identity(r) for r in approved_roles)
+        for r in base_roles:
+            ident = self._role_identity(r).strip(' |')
+            # Compare on the title+company tokens; require the title text to survive.
+            title = re.sub(r'^#{1,6}\s*', '', r.get('title', '') or '').replace('*', '').strip().lower()
+            if title and title not in approved_text_lower:
+                errors.append({
+                    'code': 'BASE_CV_ROLE_LOSS',
+                    'detail': f'Role identity missing from approved CV: {title}',
+                })
+
+        # 2) Projects preservation (each base project line must survive).
+        base_projects = self._entity_lines(base, 'projects')
+        for line in base_projects:
+            # Match on the project's leading name token(s).
+            key = line.split(':')[0][:40].lower()
+            if key and key not in approved_text_lower:
+                errors.append({'code': 'BASE_CV_PROJECT_LOSS', 'detail': f'Project content missing: {line[:60]}'})
+                break
+
+        # 3) Certifications preservation.
+        for line in self._entity_lines(base, 'certifications'):
+            key = line.split('—')[0].split(' - ')[0][:40].lower().strip()
+            if key and key not in approved_text_lower:
+                errors.append({'code': 'BASE_CV_CERTIFICATION_LOSS', 'detail': f'Certification missing: {line[:60]}'})
+                break
+
+        # 4) Education preservation.
+        for line in self._entity_lines(base, 'education'):
+            key = line.split('—')[0].split(',')[0][:40].lower().strip()
+            if key and key not in approved_text_lower:
+                errors.append({'code': 'BASE_CV_EDUCATION_LOSS', 'detail': f'Education record missing: {line[:60]}'})
+                break
+
+        # 5) Base skills must not be overwritten/lost.
+        base_skills = self._evidence.extract_base_skills(base)
+        if base_skills:
+            missing_skills = [s for s in base_skills if s.lower() not in approved_text_lower]
+            # Allow a small tolerance (rewording), but a large loss is an overwrite.
+            if len(missing_skills) > max(2, len(base_skills) // 3):
+                errors.append({
+                    'code': 'BASE_SKILL_OVERWRITE',
+                    'detail': f'{len(missing_skills)}/{len(base_skills)} base skills missing from approved CV.',
+                })
+
+        # 6) Unsupported-term leak: no UNSUPPORTED requirement may appear in the CV.
+        for term in (unsupported_terms or []):
+            t = str(term).strip().lower()
+            if not t:
+                continue
+            # Whole-word-ish match to avoid false positives on short tokens.
+            if re.search(r'(^|[^a-z0-9])' + re.escape(t) + r'([^a-z0-9]|$)', approved_text_lower):
+                errors.append({'code': 'UNSUPPORTED_TERM_LEAK', 'detail': f'Unsupported term present in CV: {term}'})
+
+        # 7) Review/version metadata leak.
+        for marker in self._METADATA_MARKERS:
+            if marker in approved_text_lower:
+                errors.append({'code': 'REVIEW_METADATA_LEAK', 'detail': f'Review metadata present in CV: "{marker}"'})
+
+        return {'ok': len(errors) == 0, 'errors': errors}
+
+
 # ========== APPLICATIONS API ==========
 
 @app.route('/api/applications', methods=['GET'])
@@ -2007,6 +2156,21 @@ def assemble_cv():
             assembled_cv = assembler.assemble(comparison, approvals)
         except AssemblyError as e:
             return jsonify({'error': str(e)}), 400
+
+        # Final CV Integrity Gate (gap-fix §20): if the caller supplies the base
+        # CV, block generation when the approved CV loses source facts or leaks
+        # disallowed content. Backward compatible: skipped when no base CV given.
+        base_cv = data.get('originalCv') or data.get('baseCv') or ''
+        if base_cv.strip():
+            unsupported_terms = data.get('unsupportedTerms') or []
+            validation = CVIntegrityValidator().validate(
+                base_cv, assembled_cv, unsupported_terms=unsupported_terms
+            )
+            if not validation['ok']:
+                return jsonify({
+                    'error': 'CV integrity validation failed — generation blocked.',
+                    'validation': validation,
+                }), 422
 
         # Compute final ATS score
         # Build impacts and approval dicts from comparison
