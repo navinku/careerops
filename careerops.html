@@ -758,10 +758,13 @@
           <textarea id="parsedSkills" style="width:100%; height:80px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:13px;"></textarea>
         </div>
 
-        <!-- Professional Experience -->
+        <!-- Professional Experience with Roles as editable subsections -->
         <div class="field" style="margin-bottom:12px;">
-          <label style="font-size:12px; color:var(--text-muted);">Professional Experience</label>
-          <div id="parsedRolesContainer" style="max-height:400px; overflow-y:auto;"></div>
+          <label style="font-size:12px; color:var(--text-muted); display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span>Professional Experience</span>
+            <button type="button" id="addRoleBtn" class="btn" style="padding:4px 8px; font-size:11px;">+ Add Role</button>
+          </label>
+          <div id="parsedRolesContainer" style="border:1px solid var(--border); border-radius:4px; overflow:hidden;"></div>
         </div>
 
         <!-- Education -->
@@ -776,10 +779,16 @@
           <textarea id="parsedCertifications" style="width:100%; height:100px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:13px;"></textarea>
         </div>
 
-        <!-- Community -->
+        <!-- Additional Information / Community -->
         <div class="field" style="margin-bottom:12px;">
-          <label style="font-size:12px; color:var(--text-muted);">Community & Additional</label>
+          <label style="font-size:12px; color:var(--text-muted);">Additional Information</label>
           <textarea id="parsedCommunity" style="width:100%; height:80px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:13px;"></textarea>
+        </div>
+
+        <!-- Languages -->
+        <div class="field" style="margin-bottom:12px;">
+          <label style="font-size:12px; color:var(--text-muted);">Languages</label>
+          <textarea id="parsedLanguages" style="width:100%; height:60px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:13px;"></textarea>
         </div>
 
         <div class="btn-row" style="margin-top:16px;">
@@ -1619,18 +1628,88 @@ document.getElementById('postCvBtn').addEventListener('click', ()=>{
   // Skills (join with line breaks for readability)
   document.getElementById('parsedSkills').value = parsed.skills.join('\n') || '';
 
-  // Roles (display each role with title + company + bullets)
+  // Roles (display each role as an editable subsection with add/remove/reorder buttons)
   const rolesHtml = parsed.roles.map((role, idx) => {
-    const bulletsHtml = (role.bullets || [])
-      .map(b => `<div style="margin-left:12px; font-size:13px;">• ${escapeHtml(b)}</div>`)
-      .join('');
-    return `<div style="margin-bottom:12px; padding:10px; background:rgba(255,255,255,0.05); border-radius:4px; border-left:3px solid var(--teal);">
-      <div style="font-weight:600; font-size:13px; margin-bottom:4px;">${escapeHtml(role.title || '')} at ${escapeHtml(role.company || '')}</div>
-      <div style="font-size:12px; color:var(--text-muted); margin-bottom:6px;">${escapeHtml(role.dates || '')}</div>
-      ${bulletsHtml}
+    const roleId = `role-${idx}`;
+    const bulletsText = (role.bullets || []).join('\n');
+    return `<div style="border-bottom:1px solid var(--border); padding:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <div style="font-weight:600; font-size:13px;">Role ${idx + 1}</div>
+        <div style="display:flex; gap:4px;">
+          ${idx > 0 ? `<button type="button" class="move-role-up" data-idx="${idx}" style="padding:4px 8px; font-size:11px; background:rgba(255,255,255,0.1); border:1px solid var(--border); border-radius:3px; cursor:pointer;">↑</button>` : ''}
+          ${idx < parsed.roles.length - 1 ? `<button type="button" class="move-role-down" data-idx="${idx}" style="padding:4px 8px; font-size:11px; background:rgba(255,255,255,0.1); border:1px solid var(--border); border-radius:3px; cursor:pointer;">↓</button>` : ''}
+          <button type="button" class="remove-role" data-idx="${idx}" style="padding:4px 8px; font-size:11px; background:rgba(255,0,0,0.1); border:1px solid var(--red); color:var(--red); border-radius:3px; cursor:pointer;">Remove</button>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+        <div>
+          <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Title</label>
+          <input type="text" class="role-title" data-idx="${idx}" value="${escapeHtml(role.title || '')}" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:12px;">
+        </div>
+        <div>
+          <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Company</label>
+          <input type="text" class="role-company" data-idx="${idx}" value="${escapeHtml(role.company || '')}" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:12px;">
+        </div>
+        <div>
+          <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Dates</label>
+          <input type="text" class="role-dates" data-idx="${idx}" value="${escapeHtml(role.dates || '')}" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:12px;">
+        </div>
+        <div>
+          <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Location</label>
+          <input type="text" class="role-location" data-idx="${idx}" value="${escapeHtml(role.location || '')}" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:12px;">
+        </div>
+      </div>
+      <div>
+        <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Bullets (one per line)</label>
+        <textarea class="role-bullets" data-idx="${idx}" style="width:100%; height:100px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:12px;">${escapeHtml(bulletsText)}</textarea>
+      </div>
     </div>`;
   }).join('');
   document.getElementById('parsedRolesContainer').innerHTML = rolesHtml;
+
+  // Attach event listeners for role management
+  setTimeout(() => {
+    // Add role button
+    document.getElementById('addRoleBtn').addEventListener('click', () => {
+      parsed.roles.push({ title: '', company: '', dates: '', location: '', bullets: [] });
+      // Re-render roles (trigger post again internally)
+      renderParsedRoles(parsed);
+    });
+
+    // Remove role buttons
+    document.querySelectorAll('.remove-role').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = parseInt(e.target.dataset.idx);
+        parsed.roles.splice(idx, 1);
+        renderParsedRoles(parsed);
+      });
+    });
+
+    // Move role up
+    document.querySelectorAll('.move-role-up').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = parseInt(e.target.dataset.idx);
+        if(idx > 0) {
+          [parsed.roles[idx], parsed.roles[idx - 1]] = [parsed.roles[idx - 1], parsed.roles[idx]];
+          renderParsedRoles(parsed);
+        }
+      });
+    });
+
+    // Move role down
+    document.querySelectorAll('.move-role-down').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = parseInt(e.target.dataset.idx);
+        if(idx < parsed.roles.length - 1) {
+          [parsed.roles[idx], parsed.roles[idx + 1]] = [parsed.roles[idx + 1], parsed.roles[idx]];
+          renderParsedRoles(parsed);
+        }
+      });
+    });
+  }, 0);
+
+  // Store parsed roles in window for use in save handler
+  window.currentParsedRoles = parsed.roles;
 
   // Education
   document.getElementById('parsedEducation').value = (parsed.education || []).join('\n') || '';
@@ -1638,8 +1717,11 @@ document.getElementById('postCvBtn').addEventListener('click', ()=>{
   // Certifications
   document.getElementById('parsedCertifications').value = (parsed.certifications || []).join('\n') || '';
 
-  // Community
+  // Additional Information / Community
   document.getElementById('parsedCommunity').value = (parsed.community || []).join('\n') || '';
+
+  // Languages
+  document.getElementById('parsedLanguages').value = (parsed.languages || []).join('\n') || '';
 
   // Show the parsed panel and save button
   document.getElementById('parsedCvPanel').style.display = 'block';
@@ -1649,8 +1731,107 @@ document.getElementById('postCvBtn').addEventListener('click', ()=>{
   toast('✓ CV parsed and displayed below. Review, edit if needed, then Save.', false);
 });
 
+// Helper function to re-render roles (used for add/remove/reorder)
+function renderParsedRoles(parsed){
+  const rolesHtml = parsed.roles.map((role, idx) => {
+    const roleId = `role-${idx}`;
+    const bulletsText = (role.bullets || []).join('\n');
+    return `<div style="border-bottom:1px solid var(--border); padding:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <div style="font-weight:600; font-size:13px;">Role ${idx + 1}</div>
+        <div style="display:flex; gap:4px;">
+          ${idx > 0 ? `<button type="button" class="move-role-up" data-idx="${idx}" style="padding:4px 8px; font-size:11px; background:rgba(255,255,255,0.1); border:1px solid var(--border); border-radius:3px; cursor:pointer;">↑</button>` : ''}
+          ${idx < parsed.roles.length - 1 ? `<button type="button" class="move-role-down" data-idx="${idx}" style="padding:4px 8px; font-size:11px; background:rgba(255,255,255,0.1); border:1px solid var(--border); border-radius:3px; cursor:pointer;">↓</button>` : ''}
+          <button type="button" class="remove-role" data-idx="${idx}" style="padding:4px 8px; font-size:11px; background:rgba(255,0,0,0.1); border:1px solid var(--red); color:var(--red); border-radius:3px; cursor:pointer;">Remove</button>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+        <div>
+          <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Title</label>
+          <input type="text" class="role-title" data-idx="${idx}" value="${escapeHtml(role.title || '')}" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:12px;">
+        </div>
+        <div>
+          <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Company</label>
+          <input type="text" class="role-company" data-idx="${idx}" value="${escapeHtml(role.company || '')}" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:12px;">
+        </div>
+        <div>
+          <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Dates</label>
+          <input type="text" class="role-dates" data-idx="${idx}" value="${escapeHtml(role.dates || '')}" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:12px;">
+        </div>
+        <div>
+          <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Location</label>
+          <input type="text" class="role-location" data-idx="${idx}" value="${escapeHtml(role.location || '')}" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:12px;">
+        </div>
+      </div>
+      <div>
+        <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Bullets (one per line)</label>
+        <textarea class="role-bullets" data-idx="${idx}" style="width:100%; height:100px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:12px;">${escapeHtml(bulletsText)}</textarea>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('parsedRolesContainer').innerHTML = rolesHtml;
+  window.currentParsedRoles = parsed.roles;
+
+  // Re-attach event listeners
+  setTimeout(() => {
+    document.querySelectorAll('.remove-role').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = parseInt(e.target.dataset.idx);
+        parsed.roles.splice(idx, 1);
+        renderParsedRoles(parsed);
+      });
+    });
+    document.querySelectorAll('.move-role-up').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = parseInt(e.target.dataset.idx);
+        if(idx > 0) {
+          [parsed.roles[idx], parsed.roles[idx - 1]] = [parsed.roles[idx - 1], parsed.roles[idx]];
+          renderParsedRoles(parsed);
+        }
+      });
+    });
+    document.querySelectorAll('.move-role-down').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = parseInt(e.target.dataset.idx);
+        if(idx < parsed.roles.length - 1) {
+          [parsed.roles[idx], parsed.roles[idx + 1]] = [parsed.roles[idx + 1], parsed.roles[idx]];
+          renderParsedRoles(parsed);
+        }
+      });
+    });
+  }, 0);
+}
+
 // Save from parsed sections (gather edited data back into raw CV format and save)
 document.getElementById('saveFromParsedBtn').addEventListener('click', async ()=>{
+  // Gather edited role data from form fields
+  const editedRoles = [];
+  document.querySelectorAll('.role-title').forEach(el => {
+    const idx = parseInt(el.dataset.idx);
+    editedRoles[idx] = editedRoles[idx] || {};
+    editedRoles[idx].title = el.value.trim();
+  });
+  document.querySelectorAll('.role-company').forEach(el => {
+    const idx = parseInt(el.dataset.idx);
+    editedRoles[idx] = editedRoles[idx] || {};
+    editedRoles[idx].company = el.value.trim();
+  });
+  document.querySelectorAll('.role-dates').forEach(el => {
+    const idx = parseInt(el.dataset.idx);
+    editedRoles[idx] = editedRoles[idx] || {};
+    editedRoles[idx].dates = el.value.trim();
+  });
+  document.querySelectorAll('.role-location').forEach(el => {
+    const idx = parseInt(el.dataset.idx);
+    editedRoles[idx] = editedRoles[idx] || {};
+    editedRoles[idx].location = el.value.trim();
+  });
+  document.querySelectorAll('.role-bullets').forEach(el => {
+    const idx = parseInt(el.dataset.idx);
+    editedRoles[idx] = editedRoles[idx] || {};
+    editedRoles[idx].bullets = el.value.trim().split('\n').map(b => b.trim()).filter(Boolean);
+  });
+
   // Build CV markdown from parsed sections
   const name = document.getElementById('parsedName').value.trim();
   const contact = document.getElementById('parsedContact').value.trim();
@@ -1659,6 +1840,7 @@ document.getElementById('saveFromParsedBtn').addEventListener('click', async ()=
   const educationText = document.getElementById('parsedEducation').value.trim();
   const certificationsText = document.getElementById('parsedCertifications').value.trim();
   const communityText = document.getElementById('parsedCommunity').value.trim();
+  const languagesText = document.getElementById('parsedLanguages').value.trim();
 
   let reconstructed = '';
   if(name) reconstructed += `# ${name}\n\n`;
@@ -1666,13 +1848,31 @@ document.getElementById('saveFromParsedBtn').addEventListener('click', async ()=
   if(summary) reconstructed += `## Professional Summary\n${summary}\n\n`;
   if(skillsText) reconstructed += `## Core Skills\n${skillsText}\n\n`;
 
-  // Add roles from the original CV (preserve full structure)
-  const rolesSection = document.getElementById('baseCvInput').value.match(/## Professional Experience\n([\s\S]*?)(?=\n## \w+|$)/i);
-  if(rolesSection) reconstructed += `## Professional Experience\n${rolesSection[1]}\n\n`;
+  // Build Professional Experience section from edited roles
+  // Use pipe-separated format that parseBaseCv expects: "Title | Company | Location (Dates)"
+  if(editedRoles.length > 0) {
+    reconstructed += `## Professional Experience\n\n`;
+    editedRoles.forEach(role => {
+      if(role.title || role.company) {
+        // Format: Title | Company | Location (Dates)
+        const roleLine = `${role.title || 'Role'} | ${role.company || 'Company'}${role.location ? ' | ' + role.location : ''}${role.dates ? ' (' + role.dates + ')' : ''}`;
+        reconstructed += `${roleLine}\n\n`;
+
+        if(role.bullets && role.bullets.length) {
+          role.bullets.forEach(bullet => {
+            reconstructed += `- ${bullet}\n`;
+          });
+          reconstructed += `\n`;
+        }
+      }
+    });
+    reconstructed += `\n`;
+  }
 
   if(educationText) reconstructed += `## Education\n${educationText}\n\n`;
   if(certificationsText) reconstructed += `## Certifications\n${certificationsText}\n\n`;
   if(communityText) reconstructed += `## Community Leadership & Engagement\n${communityText}\n\n`;
+  if(languagesText) reconstructed += `## Languages\n${languagesText}\n\n`;
 
   // Update the raw textarea with the reconstructed CV
   document.getElementById('baseCvInput').value = reconstructed;
@@ -1748,14 +1948,14 @@ document.getElementById('generateBtn').addEventListener('click', generatePackage
 // ---------- Parse base CV into structured data (no LLM) ----------
 function parseBaseCv(raw){
   const lines = raw.split('\n').map(l => l.trim()).filter(l => l && l !== '\f');
-  const parsed = { name:'', contact:'', summary:'', skills:[], roles:[], education:[], certifications:[], community:[] };
+  const parsed = { name:'', contact:'', summary:'', skills:[], roles:[], education:[], certifications:[], community:[], languages:[] };
 
   // --- contact: collect email, phone, location, linkedin, website (scan whole doc)
   const contactParts = [];
   const contactSet = new Set();
   const addContact = v => { if(!contactSet.has(v)){ contactSet.add(v); contactParts.push(v); } };
   // Only collect contact from lines BEFORE the first section header
-  const firstSectionIdx = lines.findIndex(l => /^(SUMMARY|CERTIFICATIONS|PROFESSIONAL EXPERIENCE|EDUCATION|KEY SKILLS|VOLUNTEER|COMMUNITY)/i.test(l));
+  const firstSectionIdx = lines.findIndex(l => /^(SUMMARY|PROFESSIONAL SUMMARY|CERTIFICATIONS|PROFESSIONAL EXPERIENCE|EDUCATION|KEY SKILLS|CORE SKILLS|CORE TECHNICAL SKILLS|VOLUNTEER|COMMUNITY|COMMUNITY LEADERSHIP|LANGUAGES)/i.test(l));
   const preambleLines = firstSectionIdx >= 0 ? lines.slice(0, firstSectionIdx) : lines.slice(0, 15);
   for(const l of preambleLines){
     // Split pipe-separated lines and check each token individually
@@ -1797,7 +1997,7 @@ function parseBaseCv(raw){
   }
 
   // --- split into named sections by ALL-CAPS headers or known keywords
-  const sectionRe = /^(SUMMARY|CERTIFICATIONS|PROFESSIONAL EXPERIENCE|EDUCATION|KEY SKILLS|VOLUNTEER|COMMUNITY)/i;
+  const sectionRe = /^(SUMMARY|PROFESSIONAL SUMMARY|CERTIFICATIONS|PROFESSIONAL EXPERIENCE|EDUCATION|KEY SKILLS|CORE SKILLS|CORE TECHNICAL SKILLS|VOLUNTEER|COMMUNITY|COMMUNITY LEADERSHIP|LANGUAGES)/i;
   const rawSections = {};
   let curSection = 'PREAMBLE';
   for(const l of lines){
@@ -1807,13 +2007,15 @@ function parseBaseCv(raw){
     rawSections[curSection].push(l);
   }
 
-  // --- summary
-  parsed.summary = (rawSections['SUMMARY'] || []).filter(l =>
+  // --- summary (handle both "SUMMARY" and "PROFESSIONAL SUMMARY")
+  const summaryKey = Object.keys(rawSections).find(k => /^SUMMARY|PROFESSIONAL SUMMARY/i.test(k));
+  parsed.summary = (summaryKey ? rawSections[summaryKey] : []).filter(l =>
     l !== parsed.name && !l.includes('|') && !/^Staff Platform Engineer/.test(l)
   ).join(' ').trim();
 
-  // --- skills: lines from KEY SKILLS section
-  parsed.skills = (rawSections['KEY SKILLS'] || []).filter(l => l.length > 2);
+  // --- skills: lines from KEY SKILLS or CORE SKILLS section
+  const skillsKey = Object.keys(rawSections).find(k => /^KEY SKILLS|CORE SKILLS|CORE TECHNICAL SKILLS/i.test(k));
+  parsed.skills = (skillsKey ? rawSections[skillsKey] : []).filter(l => l.length > 2);
 
   // --- certifications: bullet chars are separate lines from text in this PDF layout
   const certRaw = (rawSections['CERTIFICATIONS'] || []);
@@ -1844,6 +2046,10 @@ function parseBaseCv(raw){
   // --- community
   const commKey = Object.keys(rawSections).find(k => /VOLUNTEER|COMMUNITY/i.test(k));
   parsed.community = commKey ? (rawSections[commKey] || []).filter(l => l.length > 2) : [];
+
+  // --- languages: look for a LANGUAGES section
+  const langKey = Object.keys(rawSections).find(k => /LANGUAGES/i.test(k));
+  parsed.languages = langKey ? (rawSections[langKey] || []).filter(l => l.length > 2) : [];
 
   // --- roles: parse PROFESSIONAL EXPERIENCE
   const expLines = rawSections['PROFESSIONAL EXPERIENCE'] || [];
