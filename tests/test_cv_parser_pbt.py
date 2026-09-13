@@ -87,7 +87,13 @@ def cv_markdown(draw, min_roles=1, max_roles=4):
         parts.append(role_content)
         parts.append('')
 
-    # 7. Certifications
+    # 7. Selected Projects
+    parts.append('## Selected Projects')
+    projects_content = draw(_section_content())
+    parts.append(projects_content)
+    parts.append('')
+
+    # 8. Certifications
     parts.append('## Certifications')
     certs_content = draw(_section_content())
     parts.append(certs_content)
@@ -150,16 +156,16 @@ def test_parse_serialize_round_trip(md):
 @given(data=cv_markdown_with_role_count())
 @settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
 def test_category_parsing_completeness(data):
-    """Property 2: CV with all 10 headers and N roles produces exactly 10 top-level entries and N roles."""
+    """Property 2: CV with all headers and N roles produces all top-level entries and N roles."""
     md, expected_roles = data
     categories = parser.parse(md)
 
-    # All 10 category keys should be present
+    # All category keys should be present
     for key in CVParser.CATEGORY_ORDER:
         assert key in categories, f"Missing category key: {key}"
 
-    # Exactly 10 top-level entries
-    assert len([k for k in CVParser.CATEGORY_ORDER if k in categories]) == 10
+    # Every top-level category in CATEGORY_ORDER is present
+    assert len([k for k in CVParser.CATEGORY_ORDER if k in categories]) == len(CVParser.CATEGORY_ORDER)
 
     # Professional Experience should have exactly N roles
     pe = categories['professional_experience']

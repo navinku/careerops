@@ -1934,11 +1934,13 @@ async function generatePackage(){
     }));
 
     const llmPrompt = `You are a CV writer. Tailor ONLY the summary and experience bullets to match the job description.
-Do NOT invent skills or tools not present in the original bullets.
+Do NOT invent skills, tools, or technologies not present in the original bullets.
+Do NOT invent experience the candidate doesn't have.
 Do NOT change job titles, companies, or dates.
 Do NOT add or remove roles — keep the EXACT same number of roles.
 Keep each bullet to 1-2 lines.
 Reword bullets to include relevant keywords from the JD where the experience genuinely applies.
+CRITICAL: Do NOT add unsupported/fabricated terms. Only use keywords that are evidenced in the original experience.
 
 ORIGINAL SUMMARY:
 ${parsed.summary}
@@ -1989,6 +1991,22 @@ Respond with ONLY valid JSON:
       skills: (llmResult && llmResult.key_skills_matched) || []
     };
 
+    // Load keyword evidence BEFORE refinement so we can filter unsupported keywords (gap-fix §21)
+    let keywordEvidence = null;
+    try {
+      const evidResp = await fetch('/api/keyword-evidence', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ baseCv: currentPackage.originalCV, jd })
+      });
+      if(evidResp.ok) {
+        keywordEvidence = await evidResp.json();
+        currentPackage.keywordEvidence = keywordEvidence;
+      }
+    } catch(e) {
+      console.warn('Keyword evidence unavailable for refinement filtering:', e);
+    }
+
     // ATS score + auto-refinement loop (up to 4 iterations to hit 80+)
     let atsResult = computeATSScore(jd, currentPackage.tailoredCV);
     currentPackage.atsResult = atsResult;
@@ -1999,19 +2017,34 @@ Respond with ONLY valid JSON:
       attempt++;
       statusEl.innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:middle;"></span> ATS score ${atsResult.score}/100 — refining (attempt ${attempt}/${MAX_REFINE_ATTEMPTS})...`;
 
-      const missingKw = atsResult.missing.slice(0, 15).join(', ');
+      // Filter unsupported keywords from missing list (gap-fix §21: spec §11)
+      // Only SUPPORTED and PARTIAL keywords should be offered to the LLM for insertion
+      let supportedMissing = atsResult.missing;
+      if(keywordEvidence && keywordEvidence.unsupported) {
+        const unsupportedSet = new Set(keywordEvidence.unsupported.map(u => u.keyword.toLowerCase()));
+        supportedMissing = atsResult.missing.filter(m => !unsupportedSet.has(m.toLowerCase()));
+      }
+
+      if(supportedMissing.length === 0) {
+        // No supported keywords left to add; refinement blocked by integrity gate
+        console.log('No supported keywords available for ATS refinement — halting loop (gap-fix §21)');
+        break;
+      }
+
+      const missingKw = supportedMissing.slice(0, 15).join(', ');
       const refinePrompt = `You are an ATS keyword optimizer. The CV below scored ${atsResult.score}/100. It MUST reach 80+.
 
-MISSING KEYWORDS: ${missingKw}
+MISSING KEYWORDS (supported & evidenced): ${missingKw}
 
-YOUR TASK — surgically insert missing keywords while keeping the CV IDENTICAL in structure:
+YOUR TASK — surgically insert ONLY supported keywords while keeping the CV IDENTICAL in structure:
 1. Keep the EXACT same layout: same sections, same order, same number of bullet points, same headings
 2. Reword existing bullets to naturally include missing keywords where the candidate's experience is relevant
-3. If a "## KEY SKILLS" section exists, add missing keywords there. If not, add one after SUMMARY with a single line listing relevant skills
-4. Do NOT add new roles, new bullet points, or new sections (except KEY SKILLS if missing)
-5. Do NOT remove any content
-6. Do NOT change job titles, company names, dates, education, or certifications
-7. Do NOT invent experience the candidate doesn't have
+3. Only insert keywords that are evidenced in the original experience or current CV content
+4. If a "## KEY SKILLS" section exists, add missing keywords there. If not, add one after SUMMARY with a single line listing relevant skills
+5. Do NOT add new roles, new bullet points, or new sections (except KEY SKILLS if missing)
+6. Do NOT remove any content
+7. Do NOT change job titles, company names, dates, education, or certifications
+8. Do NOT invent or fabricate experience the candidate doesn't have (gap-fix §11)
 
 FORMAT: Return the FULL CV in markdown. Same # ## ### and - structure. Nothing else — no explanations.
 
