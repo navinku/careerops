@@ -1103,6 +1103,230 @@ class CVIntegrityValidator:
         return {'ok': len(errors) == 0, 'errors': errors}
 
 
+# ========== CANONICAL STRUCTURED CV MODEL (gap-fix §1/§2/§8/§28) ==========
+
+
+class CanonicalCV:
+    """Immutable structured representation of a CV with stable IDs + provenance.
+
+    Built from markdown via CVParser, then normalized into arrays with
+    deterministic IDs so the review UI can address every role, bullet, project,
+    certification and education record individually — and so the same source
+    always yields the same IDs (state isolation, §28).
+
+    Shape:
+        {
+          candidate, title, contact, summary,
+          skills: [str],
+          experience: [{id, title, company, dates, location, bullets:[{id,text}]}],
+          projects: [{id, name, lines:[str]}],
+          certifications: [{id, text}],
+          education: [{id, text}],
+          community: [str], languages: [str],
+          snapshotId: <stable hash of source>
+        }
+    """
+
+    def __init__(self):
+        self._parser = CVParser()
+        self._evidence = KeywordEvidenceEngine()
+
+    def _clean(self, line):
+        line = re.sub(r'^#{1,6}\s*', '', line or '').strip()
+        line = re.sub(r'^[-*]\s*', '', line).replace('**', '').strip()
+        return line
+
+    def _split_role_title(self, title_line):
+        """Split '### Title at Company' / 'Title | Company' into (title, company)."""
+        t = self._clean(title_line)
+        if ' | ' in t:
+            parts = [p.strip() for p in t.split('|')]
+            return parts[0], (parts[1] if len(parts) > 1 else '')
+        if ' at ' in t:
+            title, company = t.split(' at ', 1)
+            return title.strip(), company.strip()
+        return t, ''
+
+    def from_markdown(self, markdown):
+        parsed = self._parser.parse(markdown)
+
+        candidate = self._clean(parsed.get('heading', ''))
+        title = self._clean(parsed.get('subheading', ''))
+        contact = self._clean(parsed.get('contact', ''))
+
+        def _section_lines(cat_key, drop_headers):
+            val = parsed.get(cat_key)
+            if not val:
+                return []
+            out = []
+            for raw in str(val).split('\n'):
+                c = self._clean(raw)
+                if not c or c.upper() in drop_headers:
+                    continue
+                out.append(c)
+            return out
+
+        summary = ' '.join(_section_lines('summary', {'PROFESSIONAL SUMMARY', 'SUMMARY'}))
+        skills = self._evidence.extract_base_skills(parsed)
+
+        # Experience with stable role + bullet IDs.
+        experience = []
+        pe = parsed.get('professional_experience')
+        if isinstance(pe, dict):
+            for ri, role in enumerate(pe.get('roles', [])):
+                title_text, company = self._split_role_title(role.get('title', ''))
+                meta = self._clean(role.get('metadata', ''))
+                bullets = []
+                bi = 0
+                for raw in (role.get('content', '') or '').split('\n'):
+                    c = self._clean(raw)
+                    if not c:
+                        continue
+                    bullets.append({'id': f'role-{ri}-bullet-{bi}', 'text': c})
+                    bi += 1
+                experience.append({
+                    'id': f'role-{ri}',
+                    'title': title_text,
+                    'company': company,
+                    'dates': meta,
+                    'location': '',
+                    'bullets': bullets,
+                })
+
+        # Projects: split on '### name' blocks; each project keeps its lines.
+        projects = []
+        proj_lines = _section_lines('projects', {'SELECTED PROJECTS', 'PROJECTS'})
+        current = None
+        raw_projects = str(parsed.get('projects', '') or '').split('\n')
+        pi = 0
+        for raw in raw_projects:
+            if re.match(r'^\s*###\s+', raw):
+                if current:
+                    projects.append(current)
+                current = {'id': f'project-{pi}', 'name': self._clean(raw), 'lines': []}
+                pi += 1
+            elif current is not None:
+                c = self._clean(raw)
+                if c:
+                    current['lines'].append(c)
+        if current:
+            projects.append(current)
+        # Fallback: if no ### headings, treat each non-empty line as a project entry.
+        if not projects and proj_lines:
+            for idx, line in enumerate(proj_lines):
+                projects.append({'id': f'project-{idx}', 'name': line, 'lines': []})
+
+        certifications = [
+            {'id': f'cert-{i}', 'text': t}
+            for i, t in enumerate(_section_lines('certifications', {'CERTIFICATIONS'}))
+        ]
+        education = [
+            {'id': f'edu-{i}', 'text': t}
+            for i, t in enumerate(_section_lines('education', {'EDUCATION'}))
+        ]
+        community = _section_lines('community', {'COMMUNITY LEADERSHIP & ENGAGEMENT', 'COMMUNITY'})
+        languages = _section_lines('languages', {'LANGUAGES'})
+
+        snapshot_id = hashlib.sha1((markdown or '').encode('utf-8')).hexdigest()[:12]
+
+        return {
+            'candidate': candidate,
+            'title': title,
+            'contact': contact,
+            'summary': summary,
+            'skills': skills,
+            'experience': experience,
+            'projects': projects,
+            'certifications': certifications,
+            'education': education,
+            'community': community,
+            'languages': languages,
+            'snapshotId': snapshot_id,
+        }
+
+
+def build_review_items(base_canon, recommended_canon):
+    """Build structured ReviewItems from two CanonicalCV objects (gap-fix §8),
+    with deterministic, internally-consistent counters (§9).
+
+    Never diffs flattened section text — compares field-by-field / bullet-by-bullet
+    using the stable IDs from CanonicalCV.
+    """
+    items = []
+
+    def _add(section, entity_type, entity_id, field, base_val, reco_val):
+        base_val = (base_val or '').strip()
+        reco_val = (reco_val or '').strip()
+        if not base_val and reco_val:
+            status = 'ADDED'
+        elif base_val and not reco_val:
+            status = 'REMOVED'
+        elif base_val != reco_val:
+            status = 'CHANGED'
+        else:
+            status = 'UNCHANGED'
+        items.append({
+            'id': f'{section}:{entity_id}:{field}',
+            'section': section,
+            'entityType': entity_type,
+            'entityId': entity_id,
+            'field': field,
+            'baseValue': base_val,
+            'recommendedValue': reco_val,
+            'status': status,
+        })
+
+    # Scalar/header fields.
+    _add('HEADER', 'field', 'candidate', 'candidate', base_canon.get('candidate'), recommended_canon.get('candidate'))
+    _add('PROFESSIONAL_TITLE', 'field', 'title', 'title', base_canon.get('title'), recommended_canon.get('title'))
+    _add('PROFESSIONAL_SUMMARY', 'field', 'summary', 'summary', base_canon.get('summary'), recommended_canon.get('summary'))
+    _add('CORE_TECHNICAL_SKILLS', 'field', 'skills', 'skills',
+         ', '.join(base_canon.get('skills', [])), ', '.join(recommended_canon.get('skills', [])))
+
+    # Experience: per-role, per-bullet (§15) using stable IDs.
+    reco_roles = {r['id']: r for r in recommended_canon.get('experience', [])}
+    for role in base_canon.get('experience', []):
+        rid = role['id']
+        rreco = reco_roles.get(rid, {})
+        reco_bullets = {b['id']: b['text'] for b in rreco.get('bullets', [])}
+        for b in role.get('bullets', []):
+            _add('PROFESSIONAL_EXPERIENCE', 'experience_bullet', b['id'], 'bullet',
+                 b['text'], reco_bullets.get(b['id'], b['text']))
+
+    # Projects (by id).
+    reco_projects = {p['id']: p for p in recommended_canon.get('projects', [])}
+    for p in base_canon.get('projects', []):
+        preco = reco_projects.get(p['id'], {})
+        _add('SELECTED_PROJECTS', 'project', p['id'], 'project',
+             (p.get('name', '') + '\n' + '\n'.join(p.get('lines', []))).strip(),
+             (preco.get('name', p.get('name', '')) + '\n' + '\n'.join(preco.get('lines', p.get('lines', [])))).strip())
+
+    # Certifications / Education (by id, usually UNCHANGED).
+    reco_certs = {c['id']: c['text'] for c in recommended_canon.get('certifications', [])}
+    for c in base_canon.get('certifications', []):
+        _add('CERTIFICATIONS', 'certification', c['id'], 'text', c['text'], reco_certs.get(c['id'], c['text']))
+    reco_edu = {e['id']: e['text'] for e in recommended_canon.get('education', [])}
+    for e in base_canon.get('education', []):
+        _add('EDUCATION', 'education', e['id'], 'text', e['text'], reco_edu.get(e['id'], e['text']))
+
+    # Deterministic counters (§9).
+    changed = [i for i in items if i['status'] == 'CHANGED']
+    added = [i for i in items if i['status'] == 'ADDED']
+    removed = [i for i in items if i['status'] == 'REMOVED']
+    unchanged = [i for i in items if i['status'] == 'UNCHANGED']
+    bullets_changed = [i for i in changed if i['entityType'] == 'experience_bullet']
+
+    counters = {
+        'changedCount': len(changed),
+        'addedCount': len(added),
+        'removedCount': len(removed),
+        'unchangedCount': len(unchanged),
+        'bulletsChangedCount': len(bullets_changed),
+        'totalReviewable': len(items),
+    }
+    return items, counters
+
+
 # ========== APPLICATIONS API ==========
 
 @app.route('/api/applications', methods=['GET'])
@@ -1609,6 +1833,53 @@ def keyword_evidence():
 
     result = KeywordEvidenceEngine().analyze(parsed, jd_text, top_n=top_n)
     return jsonify(result)
+
+
+@app.route('/api/canonical-cv', methods=['POST'])
+def canonical_cv():
+    """Return the canonical structured CV model for a markdown CV (gap-fix §1/§2/§8).
+
+    Request JSON: { "cv": "<markdown>" }
+    Response: the CanonicalCV dict (candidate/title/.../experience[]/projects[]/...
+    with stable IDs and a snapshotId for state isolation).
+    """
+    data = request.json or {}
+    cv_md = (data.get('cv') or data.get('baseCv') or data.get('markdown') or '').strip()
+    if not cv_md:
+        return jsonify({'error': 'cv is required'}), 400
+    try:
+        canon = CanonicalCV().from_markdown(cv_md)
+    except ParseError as e:
+        return jsonify({'error': f'Could not parse CV: {e}'}), 400
+    return jsonify(canon)
+
+
+@app.route('/api/review-items', methods=['POST'])
+def review_items():
+    """Structured review items + deterministic counters (gap-fix §8/§9).
+
+    Request JSON: { "baseCv": "<markdown>", "recommendedCv": "<markdown>" }
+    Response: { "reviewItems": [...], "counters": {...},
+                "baseSnapshotId": ..., "recommendedSnapshotId": ... }
+    """
+    data = request.json or {}
+    base_md = (data.get('baseCv') or data.get('base_cv') or '').strip()
+    reco_md = (data.get('recommendedCv') or data.get('recommended_cv') or base_md).strip()
+    if not base_md:
+        return jsonify({'error': 'baseCv is required'}), 400
+    try:
+        canon = CanonicalCV()
+        base_canon = canon.from_markdown(base_md)
+        reco_canon = canon.from_markdown(reco_md)
+    except ParseError as e:
+        return jsonify({'error': f'Could not parse CV: {e}'}), 400
+    items, counters = build_review_items(base_canon, reco_canon)
+    return jsonify({
+        'reviewItems': items,
+        'counters': counters,
+        'baseSnapshotId': base_canon['snapshotId'],
+        'recommendedSnapshotId': reco_canon['snapshotId'],
+    })
 
 # ========== LOGIN ==========
 
