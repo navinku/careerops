@@ -256,6 +256,32 @@
     .cv-comparison-col.suggested-col::before{content:"↓ Recommended (JD + ATS)";display:block;font-size:9px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
     .cv-ats-section-header{top:0;}
   }
+  /* Experience Integrity Guardrail note (spec §11) */
+  .cv-role-mismatch{grid-column:1/-1;font-size:11px;line-height:1.5;color:var(--text);background:rgba(255,85,85,.10);border:1px solid var(--red);border-radius:4px;padding:8px 10px;margin-bottom:8px;}
+  .cv-role-mismatch code{background:var(--panel-2);padding:1px 4px;border-radius:3px;font-size:10px;}
+  /* "Why this change?" auditable panel (spec §20) */
+  .why-toggle{margin-left:auto;font-size:10px;color:var(--teal);background:transparent;border:1px solid var(--border);border-radius:4px;padding:2px 8px;cursor:pointer;}
+  .why-toggle:hover{background:var(--panel-2);}
+  .why-toggle.open{background:var(--teal);color:#000;border-color:var(--teal);}
+  .why-panel{grid-column:1/-1;margin-top:10px;padding:10px 12px;background:var(--panel-1);border-radius:4px;border-left:3px solid var(--teal);font-size:11px;line-height:1.6;}
+  .why-panel .why-row{margin-bottom:4px;}
+  .why-panel .why-label{display:inline-block;min-width:88px;font-weight:700;color:var(--muted);text-transform:uppercase;font-size:9px;letter-spacing:.5px;vertical-align:top;}
+  .why-panel .why-kw{display:inline-block;background:var(--panel-2);border:1px solid var(--border);border-radius:3px;padding:0 5px;margin:1px 2px;font-size:10px;color:var(--teal);}
+  .why-panel .why-muted{color:var(--muted);font-style:italic;}
+  .why-panel .why-risk{font-weight:700;padding:0 6px;border-radius:3px;}
+  .why-panel .why-risk.risk-low{background:var(--green);color:#000;}
+  .why-panel .why-risk.risk-medium{background:var(--amber);color:#000;}
+  .why-panel .why-risk.risk-high{background:var(--red);color:#fff;}
+  /* Application footer — subdued, responsive, non-sticky (spec §28) */
+  .app-footer{margin-top:40px;padding:14px 4px;border-top:1px solid var(--line);display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:11px;color:var(--muted);}
+  .app-footer .af-brand{font-weight:600;letter-spacing:.3px;}
+  .app-footer .af-version{background:transparent;border:none;color:var(--muted);font-family:inherit;font-size:11px;cursor:pointer;padding:0;}
+  .app-footer .af-version:hover{color:var(--teal);}
+  .app-footer .af-version[aria-expanded="true"]{color:var(--teal);}
+  .app-footer .af-details{flex-basis:100%;margin-top:8px;padding:10px 12px;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;max-width:340px;}
+  .app-footer .af-row{display:flex;justify-content:space-between;gap:16px;padding:2px 0;}
+  .app-footer .af-key{color:var(--muted);text-transform:uppercase;font-size:9px;letter-spacing:.5px;}
+  .app-footer .af-val{color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;text-align:right;}
 </style>
 </head>
 <body>
@@ -655,6 +681,18 @@
       </div>
     </div>
   </div>
+
+  <!-- APP FOOTER — running build/version (spec §25, §28, §29) -->
+  <footer class="app-footer" id="appFooter">
+    <span class="af-brand">CareerOps</span>
+    <button type="button" class="af-version" id="appVersionBtn" title="Show build details" aria-expanded="false">· <span id="appVersionText">dev</span></button>
+    <div class="af-details" id="appVersionDetails" hidden>
+      <div class="af-row"><span class="af-key">Version</span><span class="af-val" id="afVersion">dev</span></div>
+      <div class="af-row"><span class="af-key">Build date</span><span class="af-val" id="afBuildDate">—</span></div>
+      <div class="af-row"><span class="af-key">Build id</span><span class="af-val" id="afBuildId">—</span></div>
+      <div class="af-row"><span class="af-key">Built</span><span class="af-val" id="afBuild">—</span></div>
+    </div>
+  </footer>
 
 </div>
 
@@ -2636,13 +2674,36 @@ function renderComparisonRow(key, label, entry){
   const badgeClass = score_impact > 0 ? 'positive' : score_impact < 0 ? 'negative' : 'neutral';
   const badgeText = score_impact > 0 ? `+${score_impact}` : score_impact < 0 ? `${score_impact}` : '±0';
 
+  // Experience Integrity Guardrail (spec §10/§11): for a Professional Experience
+  // role, detect ROLE_CONTENT_MISMATCH — the role header (title/company) changed
+  // between base and recommended, which can mean bullets were moved under a
+  // different employer. Surface a warning and require the user to review.
+  const isPeRole = key.indexOf('professional_experience.role_') === 0;
+  const mismatch = isPeRole ? detectRoleMismatch(original_content, suggested_content) : null;
+  const mismatchBadge = mismatch
+    ? `<span class="cat-badge state-removed" title="Role identity changed between base and recommended">⚠ ROLE_CONTENT_MISMATCH</span>`
+    : '';
+  const mismatchNote = mismatch
+    ? `<div class="cv-role-mismatch">
+        <strong>⚠ Possible role/content mismatch.</strong>
+        Base role header <code>${escapeHtml(mismatch.base)}</code> differs from recommended
+        <code>${escapeHtml(mismatch.reco)}</code>. Verify bullets were not moved to a different
+        employer before approving. Original role structure is shown on the left.
+      </div>`
+    : '';
+
+  const whyPanel = buildWhyPanel(key, entry);
+
   return `<div class="cv-comparison-row ${changedClass}" data-cat-key="${escapeHtml(key)}">
     <div class="cat-header">
       <input type="checkbox" class="comparison-checkbox" data-cat-key="${escapeHtml(key)}">
       <span class="cat-name">${escapeHtml(label)}</span>
       <span class="cat-badge state ${stateClass}">${state}</span>
       <span class="cat-badge ${badgeClass}">${badgeText} ATS</span>
+      ${mismatchBadge}
+      <button type="button" class="why-toggle" onclick="toggleWhyPanel(this)">Why this change?</button>
     </div>
+    ${mismatchNote}
     <div class="cv-comparison-col original-col">
       <div class="cv-comparison-col-label">Base / Current CV</div>
       ${escapeHtml(truncateForDisplay(original_content, 200))}
@@ -2651,7 +2712,101 @@ function renderComparisonRow(key, label, entry){
       <div class="cv-comparison-col-label">Recommended (JD + ATS)</div>
       ${escapeHtml(truncateForDisplay(suggested_content, 200))}
     </div>
+    ${whyPanel}
   </div>`;
+}
+
+// Extract the identifying header line (job title / company) from a role's
+// serialized content — the first non-empty markdown heading or bold line.
+function extractRoleHeader(content){
+  if(!content) return '';
+  const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+  for(const line of lines){
+    // Prefer a ### heading; else the first bold/plain identifying line.
+    if(line.startsWith('###')) return line.replace(/^#{1,6}\s*/, '').trim();
+  }
+  // Fallback: first line that is not a bullet
+  const nonBullet = lines.find(l => !l.startsWith('-') && !l.startsWith('*'));
+  return (nonBullet || lines[0] || '').replace(/^#{1,6}\s*/, '').replace(/\*/g, '').trim();
+}
+
+// ROLE_CONTENT_MISMATCH detection (spec §11): returns {base, reco} when the
+// role header identity changed, otherwise null.
+function detectRoleMismatch(originalContent, suggestedContent){
+  const base = extractRoleHeader(originalContent);
+  const reco = extractRoleHeader(suggestedContent);
+  if(!base || !reco) return null;
+  // Normalize for comparison: collapse whitespace and lowercase.
+  const norm = s => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  if(norm(base) !== norm(reco)){
+    return { base: truncateForDisplay(base, 80), reco: truncateForDisplay(reco, 80) };
+  }
+  return null;
+}
+
+// Build the auditable "Why this change?" panel (spec §20). All signals are
+// derived from real data (the JD text and base/recommended content). Nothing
+// is fabricated: unsupported terms are flagged as higher risk, not hidden.
+function buildWhyPanel(key, entry){
+  const jd = (currentPackage && currentPackage.jd) ? currentPackage.jd : '';
+  const base = entry.original_content || '';
+  const reco = entry.suggested_content || '';
+  const impact = typeof entry.score_impact === 'number' ? entry.score_impact : 0;
+
+  // Words newly introduced in the recommended content.
+  const tokenize = t => (t.toLowerCase().match(/[a-z0-9+.#]{3,}/g) || []);
+  const baseSet = new Set(tokenize(base));
+  const recoTokens = tokenize(reco);
+  const newTerms = Array.from(new Set(recoTokens.filter(w => !baseSet.has(w))));
+
+  // JD signal: which of the new terms actually appear in the JD.
+  const jdLower = jd.toLowerCase();
+  const jdMatched = newTerms.filter(w => jdLower.includes(w)).slice(0, 12);
+
+  // Terms added that are NOT supported by the base CV (introduced only by the
+  // recommendation) — these drive the risk assessment.
+  const unsupportedNew = newTerms.filter(w => !baseSet.has(w) && jdLower.includes(w));
+
+  // Risk: LOW when recommendation reuses base vocabulary; MEDIUM/HIGH when it
+  // introduces JD terms with no evidence in the base CV.
+  let risk = 'LOW';
+  if(unsupportedNew.length >= 5) risk = 'HIGH';
+  else if(unsupportedNew.length >= 1) risk = 'MEDIUM';
+
+  const jdSignal = jdMatched.length
+    ? jdMatched.map(w => `<span class="why-kw">${escapeHtml(w)}</span>`).join(' ')
+    : '<span class="why-muted">No new JD keywords introduced by this change.</span>';
+
+  const atsReason = impact > 0
+    ? `Estimated ATS impact +${impact} (keyword/section alignment).`
+    : impact < 0
+      ? `Estimated ATS impact ${impact}.`
+      : 'No numeric ATS impact reported for this section.';
+
+  const evidence = base.trim()
+    ? escapeHtml(truncateForDisplay(base.trim(), 160))
+    : '<span class="why-muted">No base-CV evidence — this is new content. Verify it is supported.</span>';
+
+  const riskNote = risk === 'LOW'
+    ? 'Reuses vocabulary already present in your base CV.'
+    : `Introduces ${unsupportedNew.length} JD term(s) not found in your base CV — confirm they are genuinely supported before accepting.`;
+
+  return `<div class="why-panel" style="display:none;">
+    <div class="why-row"><span class="why-label">JD signal:</span> ${jdSignal}</div>
+    <div class="why-row"><span class="why-label">ATS reason:</span> ${escapeHtml(atsReason)}</div>
+    <div class="why-row"><span class="why-label">CV evidence:</span> ${evidence}</div>
+    <div class="why-row"><span class="why-label">Risk:</span> <span class="why-risk risk-${risk.toLowerCase()}">${risk}</span> <span class="why-muted">${escapeHtml(riskNote)}</span></div>
+  </div>`;
+}
+
+function toggleWhyPanel(btn){
+  const row = btn.closest('.cv-comparison-row');
+  if(!row) return;
+  const panel = row.querySelector('.why-panel');
+  if(!panel) return;
+  const open = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : 'block';
+  btn.classList.toggle('open', !open);
 }
 
 // Derive an unambiguous review state from content presence (spec §4/§28).
@@ -3832,6 +3987,40 @@ function renderQuestions(){
     });
   });
 }
+
+// ========== APP FOOTER VERSION (spec §25/§28/§29/§30) ==========
+// Fetch the running build/version from /api/version and populate the footer.
+// Never throws: on any failure the footer keeps showing "dev".
+async function loadAppVersion(){
+  const setText = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val || '—'; };
+  try{
+    const resp = await fetch('/api/version', { headers: { 'Accept': 'application/json' } });
+    if(!resp.ok) return;
+    const v = await resp.json();
+    const version = (v && v.version) ? v.version : 'dev';
+    setText('appVersionText', version);
+    setText('afVersion', version);
+    setText('afBuildDate', (v && v.buildDate) ? v.buildDate : '—');
+    setText('afBuildId', (v && v.buildId) ? v.buildId : '—');
+    setText('afBuild', (v && v.buildTime) ? v.buildTime : '—');
+  }catch(e){
+    // Static-only/dev mode: backend not reachable. Leave footer at "dev".
+    console.warn('Version endpoint unavailable; footer shows dev.', e);
+  }
+}
+
+(function initAppFooter(){
+  const btn = document.getElementById('appVersionBtn');
+  const details = document.getElementById('appVersionDetails');
+  if(btn && details){
+    btn.addEventListener('click', ()=>{
+      const open = !details.hidden;
+      details.hidden = open;
+      btn.setAttribute('aria-expanded', String(!open));
+    });
+  }
+  loadAppVersion();
+})();
 </script>
 </body>
 </html>

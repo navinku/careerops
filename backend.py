@@ -3,6 +3,7 @@ import os
 import re
 import json
 import hmac
+import hashlib
 import base64
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
@@ -32,6 +33,57 @@ TRANSCRIPTION_MODEL = os.environ.get('OPENAI_TRANSCRIPTION_MODEL', 'gpt-4o-mini-
 CAREEROPS_USERNAME = os.environ.get('CAREEROPS_USERNAME', '')
 CAREEROPS_PASSWORD = os.environ.get('CAREEROPS_PASSWORD', '')
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
+
+
+def get_version_info():
+    """Resolve the running application version without any Docker/build injection.
+
+    The version is derived at runtime from the backend source file itself:
+      - build date  = last-modified time of backend.py (UTC)
+      - build id     = short content hash of backend.py
+
+    producing a concise version like ``v2026.09.13-a1b2c3``.
+
+    Optional environment overrides are honored if present (so a deployment can
+    still pin an explicit value), but nothing needs to be injected for the
+    footer to show a meaningful, deployment-specific version:
+
+        APP_VERSION  (full override)  ->  derived "vYYYY.MM.DD-<hash>"
+
+    Never raises: any failure falls back to "dev".
+    """
+    # Explicit override wins if provided.
+    override = os.environ.get('APP_VERSION', '').strip()
+
+    build_date = ''
+    build_id = ''
+    build_time = ''
+    try:
+        source_path = os.path.abspath(__file__)
+        mtime = os.path.getmtime(source_path)
+        dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
+        build_date = dt.strftime('%Y.%m.%d')
+        build_time = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        with open(source_path, 'rb') as fh:
+            digest = hashlib.sha1(fh.read()).hexdigest()
+        build_id = digest[:6]
+    except Exception:
+        pass
+
+    if override:
+        version = override
+    elif build_date and build_id:
+        version = f'v{build_date}-{build_id}'
+    else:
+        version = 'dev'
+
+    return {
+        'version': version,
+        'appVersion': override,
+        'buildDate': build_date,
+        'buildId': build_id,
+        'buildTime': build_time,
+    }
 
 # Initialize DynamoDB using the standard AWS credential provider chain.
 try:
@@ -1140,6 +1192,7 @@ def health():
         
         return jsonify({
             'status': 'ok',
+            'version': get_version_info()['version'],
             'dynamodb': dynamodb_status,
             'docx_support': DOCX_AVAILABLE,
             'llm': 'api-based (OpenAI/Anthropic/Custom)'
@@ -1149,6 +1202,16 @@ def health():
             'status': 'error',
             'error': str(e)
         }), 500
+
+
+@app.route('/api/version', methods=['GET'])
+def version():
+    """Return the running application/Docker image version (spec §30).
+
+    Consumed by the web-app footer. Never raises for missing env vars — falls
+    back to 'dev' via get_version_info().
+    """
+    return jsonify(get_version_info())
 
 # ========== LOGIN ==========
 
