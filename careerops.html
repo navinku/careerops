@@ -728,8 +728,64 @@
         <textarea id="baseCvInput" style="min-height:380px;" placeholder="Paste your full CV here — experience, skills, education, everything. The tailoring engine works best with complete source material."></textarea>
       </div>
       <div class="btn-row">
-        <button class="btn primary" id="saveCvBtn">Save base profile</button>
+        <button class="btn secondary" id="postCvBtn">Post CV</button>
+        <button class="btn primary" id="saveCvBtn" style="display:none;">Save base profile</button>
         <span id="cvSaveStatus" class="muted-note"></span>
+      </div>
+      <!-- Parsed CV sections (displayed after "Post") -->
+      <div id="parsedCvPanel" style="display:none; margin-top:24px; padding-top:20px; border-top:1px solid var(--border);">
+        <h4 style="margin:0 0 16px 0; font-size:14px; color:var(--text-muted);">PARSED SECTIONS — Review and edit below, then click "Save base profile"</h4>
+
+        <!-- Name & Contact -->
+        <div class="field" style="margin-bottom:12px;">
+          <label style="font-size:12px; color:var(--text-muted);">Name</label>
+          <input type="text" id="parsedName" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:4px;">
+        </div>
+        <div class="field" style="margin-bottom:12px;">
+          <label style="font-size:12px; color:var(--text-muted);">Contact</label>
+          <input type="text" id="parsedContact" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:4px;">
+        </div>
+
+        <!-- Professional Summary -->
+        <div class="field" style="margin-bottom:12px;">
+          <label style="font-size:12px; color:var(--text-muted);">Professional Summary</label>
+          <textarea id="parsedSummary" style="width:100%; height:60px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:13px;"></textarea>
+        </div>
+
+        <!-- Core Skills -->
+        <div class="field" style="margin-bottom:12px;">
+          <label style="font-size:12px; color:var(--text-muted);">Core Skills</label>
+          <textarea id="parsedSkills" style="width:100%; height:80px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:13px;"></textarea>
+        </div>
+
+        <!-- Professional Experience -->
+        <div class="field" style="margin-bottom:12px;">
+          <label style="font-size:12px; color:var(--text-muted);">Professional Experience</label>
+          <div id="parsedRolesContainer" style="max-height:400px; overflow-y:auto;"></div>
+        </div>
+
+        <!-- Education -->
+        <div class="field" style="margin-bottom:12px;">
+          <label style="font-size:12px; color:var(--text-muted);">Education</label>
+          <textarea id="parsedEducation" style="width:100%; height:80px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:13px;"></textarea>
+        </div>
+
+        <!-- Certifications -->
+        <div class="field" style="margin-bottom:12px;">
+          <label style="font-size:12px; color:var(--text-muted);">Certifications</label>
+          <textarea id="parsedCertifications" style="width:100%; height:100px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:13px;"></textarea>
+        </div>
+
+        <!-- Community -->
+        <div class="field" style="margin-bottom:12px;">
+          <label style="font-size:12px; color:var(--text-muted);">Community & Additional</label>
+          <textarea id="parsedCommunity" style="width:100%; height:80px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:13px;"></textarea>
+        </div>
+
+        <div class="btn-row" style="margin-top:16px;">
+          <button class="btn secondary" id="editCvBtn" onclick="document.getElementById('baseCvInput').focus();">Edit raw CV</button>
+          <button class="btn primary" id="saveFromParsedBtn">Save base profile</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1544,10 +1600,123 @@ uploadZone.addEventListener('drop', (e)=>{
   handleCvFile(file);
 });
 
+// Parse CV and display in sections (POST workflow)
+document.getElementById('postCvBtn').addEventListener('click', ()=>{
+  const rawCv = document.getElementById('baseCvInput').value.trim();
+  if(!rawCv){
+    toast('Please paste or upload a CV first.', true);
+    return;
+  }
+
+  // Parse the CV
+  const parsed = parseBaseCv(rawCv);
+
+  // Populate the parsed sections UI
+  document.getElementById('parsedName').value = parsed.name || '';
+  document.getElementById('parsedContact').value = parsed.contact || '';
+  document.getElementById('parsedSummary').value = parsed.summary || '';
+
+  // Skills (join with line breaks for readability)
+  document.getElementById('parsedSkills').value = parsed.skills.join('\n') || '';
+
+  // Roles (display each role with title + company + bullets)
+  const rolesHtml = parsed.roles.map((role, idx) => {
+    const bulletsHtml = (role.bullets || [])
+      .map(b => `<div style="margin-left:12px; font-size:13px;">• ${escapeHtml(b)}</div>`)
+      .join('');
+    return `<div style="margin-bottom:12px; padding:10px; background:rgba(255,255,255,0.05); border-radius:4px; border-left:3px solid var(--teal);">
+      <div style="font-weight:600; font-size:13px; margin-bottom:4px;">${escapeHtml(role.title || '')} at ${escapeHtml(role.company || '')}</div>
+      <div style="font-size:12px; color:var(--text-muted); margin-bottom:6px;">${escapeHtml(role.dates || '')}</div>
+      ${bulletsHtml}
+    </div>`;
+  }).join('');
+  document.getElementById('parsedRolesContainer').innerHTML = rolesHtml;
+
+  // Education
+  document.getElementById('parsedEducation').value = (parsed.education || []).join('\n') || '';
+
+  // Certifications
+  document.getElementById('parsedCertifications').value = (parsed.certifications || []).join('\n') || '';
+
+  // Community
+  document.getElementById('parsedCommunity').value = (parsed.community || []).join('\n') || '';
+
+  // Show the parsed panel and save button
+  document.getElementById('parsedCvPanel').style.display = 'block';
+  document.getElementById('saveCvBtn').style.display = 'none';
+  document.getElementById('postCvBtn').textContent = 'Reparse CV';
+
+  toast('✓ CV parsed and displayed below. Review, edit if needed, then Save.', false);
+});
+
+// Save from parsed sections (gather edited data back into raw CV format and save)
+document.getElementById('saveFromParsedBtn').addEventListener('click', async ()=>{
+  // Build CV markdown from parsed sections
+  const name = document.getElementById('parsedName').value.trim();
+  const contact = document.getElementById('parsedContact').value.trim();
+  const summary = document.getElementById('parsedSummary').value.trim();
+  const skillsText = document.getElementById('parsedSkills').value.trim();
+  const educationText = document.getElementById('parsedEducation').value.trim();
+  const certificationsText = document.getElementById('parsedCertifications').value.trim();
+  const communityText = document.getElementById('parsedCommunity').value.trim();
+
+  let reconstructed = '';
+  if(name) reconstructed += `# ${name}\n\n`;
+  if(contact) reconstructed += `${contact}\n\n`;
+  if(summary) reconstructed += `## Professional Summary\n${summary}\n\n`;
+  if(skillsText) reconstructed += `## Core Skills\n${skillsText}\n\n`;
+
+  // Add roles from the original CV (preserve full structure)
+  const rolesSection = document.getElementById('baseCvInput').value.match(/## Professional Experience\n([\s\S]*?)(?=\n## \w+|$)/i);
+  if(rolesSection) reconstructed += `## Professional Experience\n${rolesSection[1]}\n\n`;
+
+  if(educationText) reconstructed += `## Education\n${educationText}\n\n`;
+  if(certificationsText) reconstructed += `## Certifications\n${certificationsText}\n\n`;
+  if(communityText) reconstructed += `## Community Leadership & Engagement\n${communityText}\n\n`;
+
+  // Update the raw textarea with the reconstructed CV
+  document.getElementById('baseCvInput').value = reconstructed;
+
+  // Now run the original save logic
+  const val = reconstructed;
+  const statusEl = document.getElementById('cvSaveStatus');
+  const truncationMarkers = /\.{3}\s*complete all roles|\[your name\]|\[name\]|placeholder|complete all roles as per/i;
+  if(truncationMarkers.test(val)){
+    toast('⚠️ Your CV appears incomplete or contains placeholder text. Fill in all roles before saving.', true);
+    statusEl.textContent = '⚠️ incomplete CV — fill in all roles';
+    statusEl.style.color = 'var(--red)';
+    setTimeout(()=>{ statusEl.textContent = ''; statusEl.style.color = ''; }, 5000);
+    return;
+  }
+  statusEl.textContent = 'saving...';
+  const result = await sset('base-cv', val);
+  if(result){
+    baseCv = val;
+    baseCvTimestamp = new Date().toISOString();
+    await sset('base-cv-timestamp', baseCvTimestamp);
+    updateProfileStatus();
+    statusEl.textContent = 'saved ✓';
+    statusEl.style.color = 'var(--teal)';
+    toast('✓ Base profile saved. Deploy tab can now use this data for ATS scoring.', false);
+    // Reset UI
+    setTimeout(()=>{
+      document.getElementById('parsedCvPanel').style.display = 'none';
+      document.getElementById('postCvBtn').textContent = 'Post CV';
+      statusEl.textContent = '';
+      statusEl.style.color = '';
+    }, 2000);
+  } else {
+    statusEl.textContent = 'save failed — check your connection and try again';
+    statusEl.style.color = 'var(--red)';
+    toast('Could not save base profile — try again.', true);
+  }
+  setTimeout(()=>{ statusEl.textContent = ''; statusEl.style.color = ''; }, 3000);
+});
+
+// Original save button (kept for direct save if user wants)
 document.getElementById('saveCvBtn').addEventListener('click', async ()=>{
   const val = document.getElementById('baseCvInput').value;
   const statusEl = document.getElementById('cvSaveStatus');
-  // Warn if CV looks truncated / placeholder
   const truncationMarkers = /\.{3}\s*complete all roles|\[your name\]|\[name\]|placeholder|complete all roles as per/i;
   if(truncationMarkers.test(val)){
     toast('⚠️ Your CV appears incomplete or contains placeholder text. Fill in all roles before saving.', true);
