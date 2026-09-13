@@ -170,6 +170,8 @@ class CVParser:
         'PROFESSIONAL SUMMARY': 'summary',
         'CORE SKILLS': 'core_skills',
         'PROFESSIONAL EXPERIENCE': 'professional_experience',
+        'SELECTED PROJECTS': 'projects',
+        'PROJECTS': 'projects',
         'CERTIFICATIONS': 'certifications',
         'EDUCATION': 'education',
         'COMMUNITY LEADERSHIP & ENGAGEMENT': 'community',
@@ -179,7 +181,7 @@ class CVParser:
     # The fixed ordering of top-level categories
     CATEGORY_ORDER = [
         'heading', 'subheading', 'contact', 'summary', 'core_skills',
-        'professional_experience', 'certifications', 'education',
+        'professional_experience', 'projects', 'certifications', 'education',
         'community', 'languages',
     ]
 
@@ -507,7 +509,7 @@ class ComparisonEngine:
     # Required top-level categories (excluding professional_experience which is handled specially)
     _SIMPLE_CATEGORIES = [
         'heading', 'subheading', 'contact', 'summary', 'core_skills',
-        'certifications', 'education', 'community', 'languages',
+        'projects', 'certifications', 'education', 'community', 'languages',
     ]
 
     def compare(self, original: dict, suggested: dict) -> dict:
@@ -747,6 +749,209 @@ class FinalAssembler:
         result = '\n'.join(parts)
         result = re.sub(r'\n{3,}', '\n\n', result)
         return result.strip() + '\n'
+
+
+# ========== EVIDENCE-BASED KEYWORD ENGINE (spec §4/§5/§6) ==========
+
+
+# Common words to ignore when extracting keywords/requirements.
+_EVIDENCE_STOPWORDS = {
+    'the', 'and', 'for', 'with', 'you', 'our', 'are', 'will', 'have', 'has',
+    'this', 'that', 'from', 'your', 'their', 'they', 'them', 'was', 'were',
+    'a', 'an', 'to', 'of', 'in', 'on', 'at', 'as', 'by', 'or', 'be', 'is',
+    'we', 'us', 'it', 'its', 'if', 'not', 'but', 'all', 'any', 'can', 'may',
+    'who', 'what', 'when', 'where', 'which', 'how', 'why', 'into', 'over',
+    'per', 'via', 'etc', 'e.g', 'i.e', 'able', 'across', 'using', 'use',
+    'used', 'work', 'working', 'team', 'teams', 'role', 'roles', 'job',
+    'years', 'year', 'experience', 'strong', 'good', 'plus', 'must', 'should',
+    'including', 'include', 'includes', 'such', 'well', 'like', 'new', 'other',
+    'help', 'develop', 'build', 'design', 'ensure', 'ability', 'knowledge',
+    'skills', 'skill', 'requirements', 'responsibilities', 'preferred',
+    'required', 'qualifications', 'candidate', 'candidates', 'company',
+}
+
+
+class KeywordEvidenceEngine:
+    """Classify JD requirements against genuine base-CV evidence (spec §6).
+
+    Core principles from the spec:
+      - BASE SKILLS (§4/§5) come only from the candidate's own CV — a JD keyword
+        is NEVER auto-promoted to a candidate skill.
+      - Every recommended keyword carries EVIDENCE and a coverage status:
+            SUPPORTED  — exact term appears in the base CV, with a source section.
+            PARTIAL    — related terminology exists, but the exact term is not proven.
+            UNSUPPORTED— no evidence; must not be fabricated.
+    """
+
+    # Section keys scanned for evidence, in placement-priority order.
+    _EVIDENCE_SECTIONS = [
+        ('summary', 'SUMMARY'),
+        ('core_skills', 'SKILLS'),
+        ('professional_experience', 'EXPERIENCE'),
+        ('projects', 'PROJECTS'),
+        ('certifications', 'CERTIFICATIONS'),
+        ('subheading', 'TITLE'),
+    ]
+
+    def _tokens(self, text):
+        """Lowercased meaningful tokens (>=2 chars, non-stopword, not pure digits)."""
+        out = []
+        for raw in re.findall(r"[A-Za-z][A-Za-z0-9+#./\-]{1,}", text or ''):
+            w = raw.lower().strip('-./')
+            if len(w) < 2 or w in _EVIDENCE_STOPWORDS or w.isdigit():
+                continue
+            out.append(w)
+        return out
+
+    def _section_text(self, parsed, cat_key):
+        """Return plain text for a category (handles PE dict with roles)."""
+        val = parsed.get(cat_key)
+        if val is None:
+            return ''
+        if isinstance(val, dict):
+            # professional_experience: header + all roles
+            chunks = [val.get('header', '')]
+            for role in val.get('roles', []):
+                chunks.append(role.get('title', ''))
+                chunks.append(role.get('metadata', ''))
+                chunks.append(role.get('content', ''))
+            return '\n'.join(c for c in chunks if c)
+        return str(val)
+
+    def extract_base_skills(self, parsed):
+        """Extract the candidate's genuine skills from the base CV Core Skills
+        section only (§4/§5). Returns an ordered, de-duplicated list of skill
+        phrases exactly as written (JD keywords are intentionally excluded).
+        """
+        skills_text = self._section_text(parsed, 'core_skills')
+        skills = []
+        seen = set()
+        for line in skills_text.split('\n'):
+            line = re.sub(r'^#{1,6}\s*', '', line).strip()
+            line = re.sub(r'^[-*]\s*', '', line).strip()
+            if not line or line.upper() == 'CORE SKILLS':
+                continue
+            # Lines are often "Category: A, B, C" — take the part after a colon.
+            if ':' in line:
+                line = line.split(':', 1)[1]
+            for part in re.split(r'[,;/|]', line):
+                skill = part.strip().strip('.').strip()
+                if not skill:
+                    continue
+                key = skill.lower()
+                if key in seen or key in _EVIDENCE_STOPWORDS:
+                    continue
+                seen.add(key)
+                skills.append(skill)
+        return skills
+
+    def extract_jd_requirements(self, jd_text, top_n=30):
+        """Extract candidate requirement terms from the JD, most frequent first.
+
+        Includes single tokens plus common two-word tech phrases (e.g.
+        "infrastructure as code" is captured token-wise; "incident response"
+        as a bigram) to improve matching quality.
+        """
+        counts = {}
+        tokens = self._tokens(jd_text)
+        for t in tokens:
+            counts[t] = counts.get(t, 0) + 1
+        # Bigrams of adjacent meaningful tokens.
+        for a, b in zip(tokens, tokens[1:]):
+            bg = f'{a} {b}'
+            counts[bg] = counts.get(bg, 0) + 2  # slight boost for phrases
+        ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        # Prefer keeping distinct terms; cap at top_n.
+        return [term for term, _ in ranked[:top_n]]
+
+    def classify_keyword(self, keyword, section_texts_lower):
+        """Classify a single JD keyword against base-CV section text.
+
+        Returns (status, source_section, source_evidence, recommended_section, risk).
+        """
+        kw = keyword.lower().strip()
+        # SUPPORTED: exact keyword present in a base section.
+        for cat_key, placement in self._EVIDENCE_SECTIONS:
+            text_lower = section_texts_lower.get(cat_key, '')
+            if not text_lower:
+                continue
+            if kw in text_lower:
+                evidence = self._find_evidence_line(cat_key, kw, section_texts_lower)
+                return 'SUPPORTED', placement, evidence, placement, 'LOW'
+        # PARTIAL: a token of a multi-word keyword, or a shared stem, is present.
+        parts = [p for p in kw.split() if len(p) >= 3]
+        for cat_key, placement in self._EVIDENCE_SECTIONS:
+            text_lower = section_texts_lower.get(cat_key, '')
+            if not text_lower:
+                continue
+            for p in parts:
+                stem = p[:-2] if len(p) >= 5 else p
+                if stem and stem in text_lower:
+                    evidence = self._find_evidence_line(cat_key, stem, section_texts_lower)
+                    return 'PARTIAL', placement, evidence, placement, 'MEDIUM'
+        # UNSUPPORTED: no evidence — do not fabricate.
+        return 'UNSUPPORTED', '', '', '', 'HIGH'
+
+    def _find_evidence_line(self, cat_key, needle, section_texts_lower):
+        """Return the original (non-lowercased) source line containing needle."""
+        original = section_texts_lower.get('_orig_' + cat_key, '')
+        for line in original.split('\n'):
+            if needle in line.lower():
+                clean = re.sub(r'^#{1,6}\s*', '', line).strip()
+                clean = re.sub(r'^[-*]\s*', '', clean).strip()
+                clean = clean.replace('**', '')
+                if clean:
+                    return clean[:200]
+        return ''
+
+    def analyze(self, parsed_base_cv, jd_text, top_n=30):
+        """Full analysis. Returns a dict with base skills and coverage buckets."""
+        base_skills = self.extract_base_skills(parsed_base_cv)
+
+        # Precompute lowercase + original section text for evidence lookups.
+        section_texts_lower = {}
+        for cat_key, _ in self._EVIDENCE_SECTIONS:
+            txt = self._section_text(parsed_base_cv, cat_key)
+            section_texts_lower[cat_key] = txt.lower()
+            section_texts_lower['_orig_' + cat_key] = txt
+
+        requirements = self.extract_jd_requirements(jd_text, top_n=top_n)
+
+        supported, partial, unsupported = [], [], []
+        for kw in requirements:
+            status, src, evidence, placement, risk = self.classify_keyword(kw, section_texts_lower)
+            item = {
+                'keyword': kw,
+                'status': status,
+                'source_section': src,
+                'source_evidence': evidence,
+                'recommended_section': placement,
+                'risk': risk,
+            }
+            if status == 'SUPPORTED':
+                supported.append(item)
+            elif status == 'PARTIAL':
+                partial.append(item)
+            else:
+                unsupported.append(item)
+
+        total = len(requirements)
+        coverage = {
+            'total': total,
+            'supported': len(supported),
+            'partial': len(partial),
+            'unsupported': len(unsupported),
+            # "Critical gaps" = unsupported requirements (spec §20).
+            'critical': len(unsupported),
+            'supported_pct': round(100 * len(supported) / total) if total else 0,
+        }
+        return {
+            'baseSkills': base_skills,
+            'supported': supported,
+            'partial': partial,
+            'unsupported': unsupported,
+            'coverage': coverage,
+        }
 
 
 # ========== APPLICATIONS API ==========
@@ -1212,6 +1417,49 @@ def version():
     back to 'dev' via get_version_info().
     """
     return jsonify(get_version_info())
+
+
+@app.route('/api/keyword-evidence', methods=['POST'])
+def keyword_evidence():
+    """Evidence-based keyword coverage for a base CV vs. a JD (spec §4/§5/§6/§20).
+
+    Request JSON:
+        { "baseCv": "<markdown>", "jd": "<job description>", "topN"?: int }
+
+    Response JSON:
+        {
+          "baseSkills": [...],
+          "supported":   [{keyword, status, source_section, source_evidence,
+                           recommended_section, risk}, ...],
+          "partial":     [...],
+          "unsupported": [...],
+          "coverage": {total, supported, partial, unsupported, critical, supported_pct}
+        }
+
+    Base skills come only from the CV (never from the JD). Unsupported
+    requirements are reported, never fabricated.
+    """
+    data = request.json or {}
+    base_cv = (data.get('baseCv') or data.get('base_cv') or '').strip()
+    jd_text = (data.get('jd') or data.get('jobDescription') or '').strip()
+    top_n = data.get('topN') or data.get('top_n') or 30
+    try:
+        top_n = max(1, min(int(top_n), 100))
+    except (TypeError, ValueError):
+        top_n = 30
+
+    if not base_cv:
+        return jsonify({'error': 'baseCv is required'}), 400
+    if not jd_text:
+        return jsonify({'error': 'jd is required'}), 400
+
+    try:
+        parsed = CVParser().parse(base_cv)
+    except ParseError as e:
+        return jsonify({'error': f'Could not parse base CV: {e}'}), 400
+
+    result = KeywordEvidenceEngine().analyze(parsed, jd_text, top_n=top_n)
+    return jsonify(result)
 
 # ========== LOGIN ==========
 

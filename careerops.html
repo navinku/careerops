@@ -282,6 +282,36 @@
   .app-footer .af-row{display:flex;justify-content:space-between;gap:16px;padding:2px 0;}
   .app-footer .af-key{color:var(--muted);text-transform:uppercase;font-size:9px;letter-spacing:.5px;}
   .app-footer .af-val{color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;text-align:right;}
+  /* ATS keyword coverage panel (spec §20) */
+  .ats-coverage{margin:0 0 14px 0;padding:12px;background:var(--panel-1);border-radius:6px;}
+  .ats-coverage-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;}
+  .ats-coverage .cov-item{text-align:center;padding:8px 4px;background:var(--panel-2);border-radius:5px;border-top:2px solid var(--muted);}
+  .ats-coverage .cov-item .cov-num{font-size:18px;font-weight:700;}
+  .ats-coverage .cov-item .cov-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-top:2px;}
+  .ats-coverage .cov-supported{border-top-color:var(--green);}
+  .ats-coverage .cov-supported .cov-num{color:var(--green);}
+  .ats-coverage .cov-partial{border-top-color:var(--amber);}
+  .ats-coverage .cov-partial .cov-num{color:var(--amber);}
+  .ats-coverage .cov-unsupported{border-top-color:var(--red);}
+  .ats-coverage .cov-unsupported .cov-num{color:var(--red);}
+  .ats-coverage .cov-critical{border-top-color:var(--red);}
+  .ats-coverage .cov-critical .cov-num{color:var(--red);}
+  .ats-coverage .cov-pct .cov-num{color:var(--teal);}
+  .ats-coverage-note{font-size:10px;color:var(--muted);margin-top:8px;line-height:1.5;font-style:italic;}
+  .kw-evidence-list{margin-top:10px;max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;}
+  .kw-evidence-item{padding:8px;background:var(--panel-2);border-radius:5px;font-size:11px;border-left:3px solid var(--muted);}
+  .kw-evidence-item.st-supported{border-left-color:var(--green);}
+  .kw-evidence-item.st-partial{border-left-color:var(--amber);}
+  .kw-evidence-item.st-unsupported{border-left-color:var(--red);}
+  .kw-evidence-item .kw-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .kw-evidence-item .kw-term{font-weight:700;color:var(--text);}
+  .kw-evidence-item .kw-badge{font-size:8px;font-weight:700;padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:.3px;}
+  .kw-evidence-item .kw-badge.st-supported{background:var(--green);color:#000;}
+  .kw-evidence-item .kw-badge.st-partial{background:var(--amber);color:#000;}
+  .kw-evidence-item .kw-badge.st-unsupported{background:var(--red);color:#fff;}
+  .kw-evidence-item .kw-place{font-size:9px;color:var(--muted);margin-left:auto;text-transform:uppercase;letter-spacing:.3px;}
+  .kw-evidence-item .kw-ev{color:var(--muted);margin-top:4px;line-height:1.5;}
+  @media(max-width:640px){ .ats-coverage-grid{grid-template-columns:repeat(2,1fr);} }
 </style>
 </head>
 <body>
@@ -396,6 +426,20 @@
             </div>
             <div id="cvScoreUnavailable" class="cv-score-unavailable" style="display:none;">Score unavailable — LLM did not return scoring data. Approval workflow still available.</div>
             <div id="atsComparisonSummary" style="font-size:12px;color:var(--text);margin:8px 0;padding:8px;background:var(--panel-1);border-radius:4px;"></div>
+          </div>
+
+          <!-- ATS keyword coverage panel (spec §20) — evidence-based -->
+          <div id="atsCoveragePanel" class="ats-coverage" style="display:none;">
+            <div class="ats-coverage-grid">
+              <div class="cov-item cov-supported"><div class="cov-num" id="covSupported">0</div><div class="cov-lbl">Supported</div></div>
+              <div class="cov-item cov-partial"><div class="cov-num" id="covPartial">0</div><div class="cov-lbl">Partial</div></div>
+              <div class="cov-item cov-unsupported"><div class="cov-num" id="covUnsupported">0</div><div class="cov-lbl">Unsupported</div></div>
+              <div class="cov-item cov-critical"><div class="cov-num" id="covCritical">0</div><div class="cov-lbl">Critical gaps</div></div>
+              <div class="cov-item cov-pct"><div class="cov-num" id="covPct">0%</div><div class="cov-lbl">Supported coverage</div></div>
+            </div>
+            <div class="ats-coverage-note">Base skills are taken only from your CV — JD keywords are never added as skills without evidence. Unsupported requirements are shown but not fabricated.</div>
+            <button type="button" class="why-toggle" id="kwEvidenceToggle" onclick="toggleKwEvidence()" style="margin:8px 0 0 0;">Show keyword evidence</button>
+            <div id="kwEvidenceList" class="kw-evidence-list" hidden></div>
           </div>
 
           <div id="comparisonContent" style="max-height:500px;overflow-y:auto;margin-bottom:16px;"></div>
@@ -2155,12 +2199,22 @@ document.getElementById('rejectAllChangesBtn')?.addEventListener('click', ()=>{
 });
 
 document.getElementById('smartAcceptBtn')?.addEventListener('click', ()=>{
+  // Evidence-safe Smart Accept (spec §19): auto-accept only positive-ATS changes
+  // that are NOT high-risk and NOT flagged as a role/content mismatch. Anything
+  // risky is left unchecked for manual REVIEW REQUIRED.
+  let accepted = 0, skipped = 0;
   document.querySelectorAll('.cv-comparison-row.changed').forEach(row => {
     const badge = row.querySelector('.cat-badge.positive');
     const checkbox = row.querySelector('.comparison-checkbox');
-    if(badge && checkbox){
-      checkbox.checked = true;
+    if(!badge || !checkbox) return;
+    const isHighRisk = row.dataset.risk === 'HIGH';
+    const isMismatch = row.dataset.mismatch === '1';
+    if(isHighRisk || isMismatch){
+      skipped++;
+      return; // leave for manual review — never auto-accept unsupported/mismatched
     }
+    checkbox.checked = true;
+    accepted++;
   });
   // Fallback for legacy comparison view
   document.querySelectorAll('.ats-badge.improved').forEach(badge => {
@@ -2170,6 +2224,11 @@ document.getElementById('smartAcceptBtn')?.addEventListener('click', ()=>{
   updateComparisonStats();
   updateBackendScoreBanner();
   saveComparisonState();
+  if(typeof toast === 'function'){
+    toast(skipped > 0
+      ? `Smart Accept: ${accepted} accepted · ${skipped} left for review (high-risk/mismatch)`
+      : `Smart Accept: ${accepted} evidence-safe change${accepted === 1 ? '' : 's'} accepted`);
+  }
 });
 
 document.getElementById('backToEditBtn')?.addEventListener('click', ()=>{
@@ -2517,19 +2576,36 @@ function renderBackendComparison(compareData){
 
   // Change summary counts (spec §18): categories changed / added / removed / unchanged.
   let cntChanged = 0, cntAdded = 0, cntRemoved = 0, cntUnchanged = 0;
-  for(const entry of Object.values(comparison)){
+  let bulletsChanged = 0;
+  const keywordsAdded = new Set();
+  const _tokenize = t => (String(t||'').toLowerCase().match(/[a-z0-9+.#]{3,}/g) || []);
+  const _bullets = t => String(t||'').split('\n').map(l=>l.trim()).filter(l => /^[-*]\s+/.test(l));
+  for(const [k, entry] of Object.entries(comparison)){
     if(!entry || typeof entry !== 'object') continue;
     const state = deriveChangeState(entry);
     if(state === 'ADDED') cntAdded++;
     else if(state === 'REMOVED') cntRemoved++;
     else if(state === 'CHANGED') cntChanged++;
     else cntUnchanged++;
+    if(entry.changed){
+      // Keywords genuinely introduced by the recommendation for this entry.
+      const baseSet = new Set(_tokenize(entry.original_content));
+      _tokenize(entry.suggested_content).forEach(w => { if(!baseSet.has(w)) keywordsAdded.add(w); });
+      // Count changed bullets for PE roles (base vs recommended bullet lists).
+      if(k.indexOf('professional_experience.role_') === 0){
+        const ob = _bullets(entry.original_content), sb = _bullets(entry.suggested_content);
+        const n = Math.max(ob.length, sb.length);
+        for(let bi = 0; bi < n; bi++){ if((ob[bi]||'') !== (sb[bi]||'')) bulletsChanged++; }
+      }
+    }
   }
   const parts = [];
   parts.push(`<strong>${cntChanged}</strong> changed`);
   if(cntAdded) parts.push(`<strong>${cntAdded}</strong> added`);
   if(cntRemoved) parts.push(`<strong>${cntRemoved}</strong> removed`);
   parts.push(`<strong>${cntUnchanged}</strong> unchanged`);
+  if(bulletsChanged) parts.push(`<strong>${bulletsChanged}</strong> bullet${bulletsChanged===1?'':'s'} changed`);
+  if(keywordsAdded.size) parts.push(`<strong>${keywordsAdded.size}</strong> keyword${keywordsAdded.size===1?'':'s'} added`);
   summary.innerHTML = `${parts.join(' · ')} — review and approve recommendations below.`;
 
   // Render category rows
@@ -2551,8 +2627,9 @@ function renderBackendComparison(compareData){
   const CATEGORY_LABELS = {
     heading: 'Name', subheading: 'Professional Title', contact: 'Contact Information',
     summary: 'Professional Summary', core_skills: 'Core Technical Skills',
-    professional_experience: 'Experience Section (Header)', certifications: 'Certifications',
-    education: 'Education', community: 'Additional Information', languages: 'Languages'
+    professional_experience: 'Experience Section (Header)', projects: 'Selected Projects',
+    certifications: 'Certifications', education: 'Education',
+    community: 'Additional Information', languages: 'Languages'
   };
 
   // ATS checklist "Recommended section order" (ATS_Friendly_CV_Checklist.md §2).
@@ -2563,9 +2640,10 @@ function renderBackendComparison(compareData){
     { num: '2', title: 'Professional Summary', hint: '3–5 concise lines', cats: ['summary'] },
     { num: '3', title: 'Core Technical Skills', hint: 'Categorized, JD-relevant first', cats: ['core_skills'] },
     { num: '4', title: 'Professional Experience', hint: 'Action + tech + scope + result', cats: ['professional_experience'], includePeRoles: true },
-    { num: '5', title: 'Certifications', hint: 'Exact names, JD-relevant', cats: ['certifications'] },
-    { num: '6', title: 'Education', hint: 'Degree · Institution · Year', cats: ['education'] },
-    { num: '7', title: 'Additional Information', hint: 'Community · Languages · Other', cats: ['community', 'languages'] },
+    { num: '5', title: 'Selected Projects', hint: 'Separate from employment · genuine work only', cats: ['projects'] },
+    { num: '6', title: 'Certifications', hint: 'Exact names, JD-relevant', cats: ['certifications'] },
+    { num: '7', title: 'Education', hint: 'Degree · Institution · Year', cats: ['education'] },
+    { num: '8', title: 'Additional Information', hint: 'Community · Languages · Other', cats: ['community', 'languages'] },
   ];
 
   // Two-column legend: left = base/current CV, right = recommended per JD + ATS
@@ -2628,6 +2706,9 @@ function renderBackendComparison(compareData){
   content.innerHTML = html;
   panel.style.display = 'block';
 
+  // Evidence-based keyword coverage panel (spec §20). Non-blocking.
+  loadKeywordEvidence();
+
   // Attach checkbox listeners
   setTimeout(()=>{
     document.querySelectorAll('.comparison-checkbox:not([disabled])').forEach(cb => {
@@ -2644,6 +2725,79 @@ function renderBackendComparison(compareData){
   }, 50);
 }
 
+// Fetch evidence-based keyword coverage for base CV vs JD and render §20 panel.
+// Base skills come only from the CV; unsupported requirements are shown, never
+// fabricated. Fails silently (panel stays hidden) if the backend is unreachable.
+async function loadKeywordEvidence(){
+  const panel = document.getElementById('atsCoveragePanel');
+  if(!panel || !currentPackage) return;
+  const baseCv = currentPackage.originalCV || '';
+  const jd = currentPackage.jd || '';
+  if(!baseCv || !jd) return;
+  try{
+    const resp = await fetch('/api/keyword-evidence', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ baseCv, jd })
+    });
+    if(!resp.ok) return;
+    const data = await resp.json();
+    currentPackage.keywordEvidence = data;
+    renderKeywordEvidence(data);
+  }catch(e){
+    console.warn('Keyword evidence unavailable:', e);
+  }
+}
+
+function renderKeywordEvidence(data){
+  const panel = document.getElementById('atsCoveragePanel');
+  if(!panel || !data || !data.coverage) return;
+  const cov = data.coverage;
+  const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
+  set('covSupported', cov.supported);
+  set('covPartial', cov.partial);
+  set('covUnsupported', cov.unsupported);
+  set('covCritical', cov.critical);
+  set('covPct', (cov.supported_pct != null ? cov.supported_pct : 0) + '%');
+
+  // Build the evidence list: supported, then partial, then unsupported.
+  const items = []
+    .concat(data.supported || [])
+    .concat(data.partial || [])
+    .concat(data.unsupported || []);
+  const rows = items.map(it => {
+    const st = (it.status || '').toLowerCase();
+    const stClass = 'st-' + st;
+    const place = it.recommended_section
+      ? `<span class="kw-place">place: ${escapeHtml(it.recommended_section)}</span>` : '';
+    const ev = it.source_evidence
+      ? `<div class="kw-ev">Evidence (${escapeHtml(it.source_section || '')}): ${escapeHtml(it.source_evidence)}</div>`
+      : (it.status === 'UNSUPPORTED'
+          ? `<div class="kw-ev">No evidence in base CV — <strong>not added</strong> (spec §21).</div>`
+          : '');
+    return `<div class="kw-evidence-item ${stClass}">
+      <div class="kw-head">
+        <span class="kw-term">${escapeHtml(it.keyword)}</span>
+        <span class="kw-badge ${stClass}">${escapeHtml(it.status)}</span>
+        ${place}
+      </div>
+      ${ev}
+    </div>`;
+  }).join('');
+  const list = document.getElementById('kwEvidenceList');
+  if(list) list.innerHTML = rows || '<div class="cv-comparison-nochanges">No JD keywords extracted.</div>';
+  panel.style.display = 'block';
+}
+
+function toggleKwEvidence(){
+  const list = document.getElementById('kwEvidenceList');
+  const btn = document.getElementById('kwEvidenceToggle');
+  if(!list) return;
+  const open = !list.hidden;
+  list.hidden = open;
+  if(btn) btn.textContent = open ? 'Show keyword evidence' : 'Hide keyword evidence';
+}
+
 function renderComparisonRow(key, label, entry){
   const { original_content, suggested_content, changed, score_impact } = entry;
   const changedClass = changed ? 'changed' : '';
@@ -2657,7 +2811,7 @@ function renderComparisonRow(key, label, entry){
       </div>
       <div class="cv-comparison-col original-col">
         <div class="cv-comparison-col-label">Base / Current CV</div>
-        ${escapeHtml(truncateForDisplay(original_content, 100))}
+        ${renderCvSnippet(original_content, 100)}
       </div>
       <div class="cv-comparison-col suggested-col" style="opacity:.5;">
         <div class="cv-comparison-col-label">Recommended (JD + ATS)</div>
@@ -2693,8 +2847,9 @@ function renderComparisonRow(key, label, entry){
     : '';
 
   const whyPanel = buildWhyPanel(key, entry);
+  const risk = assessChangeRisk(entry);
 
-  return `<div class="cv-comparison-row ${changedClass}" data-cat-key="${escapeHtml(key)}">
+  return `<div class="cv-comparison-row ${changedClass}" data-cat-key="${escapeHtml(key)}" data-risk="${risk}" data-mismatch="${mismatch ? '1' : '0'}">
     <div class="cat-header">
       <input type="checkbox" class="comparison-checkbox" data-cat-key="${escapeHtml(key)}">
       <span class="cat-name">${escapeHtml(label)}</span>
@@ -2706,11 +2861,11 @@ function renderComparisonRow(key, label, entry){
     ${mismatchNote}
     <div class="cv-comparison-col original-col">
       <div class="cv-comparison-col-label">Base / Current CV</div>
-      ${escapeHtml(truncateForDisplay(original_content, 200))}
+      ${renderCvSnippet(original_content, 200)}
     </div>
     <div class="cv-comparison-col suggested-col">
       <div class="cv-comparison-col-label">Recommended (JD + ATS)</div>
-      ${escapeHtml(truncateForDisplay(suggested_content, 200))}
+      ${renderCvSnippet(suggested_content, 200)}
     </div>
     ${whyPanel}
   </div>`;
@@ -2744,34 +2899,32 @@ function detectRoleMismatch(originalContent, suggestedContent){
   return null;
 }
 
+// Assess evidence risk for a change (shared by the Why panel and Smart Accept).
+// Risk rises when the recommendation introduces JD terms that have NO evidence
+// in the base CV — i.e. potentially fabricated/unsupported additions (spec §19).
+function assessChangeRisk(entry){
+  const jd = (currentPackage && currentPackage.jd) ? currentPackage.jd : '';
+  const base = entry.original_content || '';
+  const reco = entry.suggested_content || '';
+  const tokenize = t => (t.toLowerCase().match(/[a-z0-9+.#]{3,}/g) || []);
+  const baseSet = new Set(tokenize(base));
+  const newTerms = Array.from(new Set(tokenize(reco).filter(w => !baseSet.has(w))));
+  const jdLower = jd.toLowerCase();
+  const jdMatched = newTerms.filter(w => jdLower.includes(w)).slice(0, 12);
+  const unsupportedNew = newTerms.filter(w => !baseSet.has(w) && jdLower.includes(w));
+  let risk = 'LOW';
+  if(unsupportedNew.length >= 5) risk = 'HIGH';
+  else if(unsupportedNew.length >= 1) risk = 'MEDIUM';
+  return { risk, unsupportedNew, jdMatched };
+}
+
 // Build the auditable "Why this change?" panel (spec §20). All signals are
 // derived from real data (the JD text and base/recommended content). Nothing
 // is fabricated: unsupported terms are flagged as higher risk, not hidden.
 function buildWhyPanel(key, entry){
-  const jd = (currentPackage && currentPackage.jd) ? currentPackage.jd : '';
   const base = entry.original_content || '';
-  const reco = entry.suggested_content || '';
   const impact = typeof entry.score_impact === 'number' ? entry.score_impact : 0;
-
-  // Words newly introduced in the recommended content.
-  const tokenize = t => (t.toLowerCase().match(/[a-z0-9+.#]{3,}/g) || []);
-  const baseSet = new Set(tokenize(base));
-  const recoTokens = tokenize(reco);
-  const newTerms = Array.from(new Set(recoTokens.filter(w => !baseSet.has(w))));
-
-  // JD signal: which of the new terms actually appear in the JD.
-  const jdLower = jd.toLowerCase();
-  const jdMatched = newTerms.filter(w => jdLower.includes(w)).slice(0, 12);
-
-  // Terms added that are NOT supported by the base CV (introduced only by the
-  // recommendation) — these drive the risk assessment.
-  const unsupportedNew = newTerms.filter(w => !baseSet.has(w) && jdLower.includes(w));
-
-  // Risk: LOW when recommendation reuses base vocabulary; MEDIUM/HIGH when it
-  // introduces JD terms with no evidence in the base CV.
-  let risk = 'LOW';
-  if(unsupportedNew.length >= 5) risk = 'HIGH';
-  else if(unsupportedNew.length >= 1) risk = 'MEDIUM';
+  const { risk, unsupportedNew, jdMatched } = assessChangeRisk(entry);
 
   const jdSignal = jdMatched.length
     ? jdMatched.map(w => `<span class="why-kw">${escapeHtml(w)}</span>`).join(' ')
@@ -2784,7 +2937,7 @@ function buildWhyPanel(key, entry){
       : 'No numeric ATS impact reported for this section.';
 
   const evidence = base.trim()
-    ? escapeHtml(truncateForDisplay(base.trim(), 160))
+    ? renderCvSnippet(base.trim(), 160)
     : '<span class="why-muted">No base-CV evidence — this is new content. Verify it is supported.</span>';
 
   const riskNote = risk === 'LOW'
@@ -2823,6 +2976,30 @@ function truncateForDisplay(text, maxLen){
   if(!text) return '';
   if(text.length <= maxLen) return text;
   return text.substring(0, maxLen) + '…';
+}
+
+// Render CV content for the review UI without leaking raw Markdown (spec §9).
+// Strips heading markers (##, ###), bold markers (**), and normalizes bullet
+// dashes, then escapes and preserves line breaks. Returns safe HTML.
+function stripCvMarkdown(text){
+  if(!text) return '';
+  return text.split('\n').map(raw => {
+    let line = raw.replace(/\s+$/,'');
+    // Drop heading hashes but keep the heading text.
+    line = line.replace(/^#{1,6}\s*/, '');
+    // Remove bold/italic markers.
+    line = line.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1');
+    line = line.replace(/`([^`]+)`/g, '$1');
+    // Normalize bullet markers to a bullet glyph.
+    line = line.replace(/^\s*[-*]\s+/, '• ');
+    return line;
+  }).join('\n');
+}
+
+function renderCvSnippet(text, maxLen){
+  const cleaned = stripCvMarkdown(text || '');
+  const truncated = truncateForDisplay(cleaned, maxLen);
+  return escapeHtml(truncated).replace(/\n/g, '<br>');
 }
 
 function togglePeAccordion(headerEl){
