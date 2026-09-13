@@ -312,6 +312,12 @@
   .kw-evidence-item .kw-place{font-size:9px;color:var(--muted);margin-left:auto;text-transform:uppercase;letter-spacing:.3px;}
   .kw-evidence-item .kw-ev{color:var(--muted);margin-top:4px;line-height:1.5;}
   @media(max-width:640px){ .ats-coverage-grid{grid-template-columns:repeat(2,1fr);} }
+  /* Final CV integrity gate errors (gap-fix §20) */
+  .integrity-errors{margin-bottom:12px;padding:12px;background:rgba(242,84,91,.10);border:1px solid var(--red);border-radius:6px;}
+  .integrity-errors .ie-title{font-size:12px;font-weight:700;color:var(--red);margin-bottom:6px;}
+  .integrity-errors ul{margin:0;padding-left:18px;}
+  .integrity-errors li{font-size:11px;color:var(--text);line-height:1.6;}
+  .integrity-errors code{background:var(--panel-2);padding:1px 5px;border-radius:3px;font-size:10px;color:var(--red);}
 </style>
 </head>
 <body>
@@ -451,6 +457,8 @@
           </div>
 
           <div id="comparisonSummaryStats" style="font-size:11px;color:var(--muted);margin-bottom:12px;"></div>
+
+          <div id="integrityErrors" class="integrity-errors" hidden></div>
 
           <div style="display:flex;gap:8px;">
             <button class="btn ghost" id="backToEditBtn" style="font-size:11px;">← Back</button>
@@ -2253,6 +2261,11 @@ document.getElementById('generateFinalCvBtn')?.addEventListener('click', async (
     // If we have backend comparison data, use /api/assemble-cv
     if(currentPackage.backendComparison){
       const approvals = getBackendApprovalStates();
+      // Collect UNSUPPORTED requirement terms so the integrity gate can block
+      // any that leaked into the approved CV (gap-fix §20).
+      const unsupportedTerms = (currentPackage.keywordEvidence && currentPackage.keywordEvidence.unsupported)
+        ? currentPackage.keywordEvidence.unsupported.map(u => u.keyword)
+        : [];
       const resp = await fetch('/api/assemble-cv', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -2262,10 +2275,21 @@ document.getElementById('generateFinalCvBtn')?.addEventListener('click', async (
           comparison: currentPackage.backendComparison.comparison,
           approvals: approvals,
           baselineScore: currentPackage.backendComparison.baseline_score || 0,
-          categoryScores: currentPackage.categoryScores || {}
+          categoryScores: currentPackage.categoryScores || {},
+          originalCv: currentPackage.originalCV || '',
+          unsupportedTerms
         })
       });
+      if(resp.status === 422){
+        // Integrity gate blocked generation — surface errors, do NOT produce a CV.
+        const body = await resp.json().catch(()=>({}));
+        showIntegrityErrors(body && body.validation ? body.validation.errors : []);
+        btnEl.disabled = false;
+        btnEl.textContent = '✓ Generate Final CV';
+        return;
+      }
       if(resp.ok){
+        clearIntegrityErrors();
         const result = await resp.json();
         currentPackage.mergedCV = result.assembled_cv;
         if(result.final_score != null){
@@ -2796,6 +2820,39 @@ function toggleKwEvidence(){
   const open = !list.hidden;
   list.hidden = open;
   if(btn) btn.textContent = open ? 'Show keyword evidence' : 'Hide keyword evidence';
+}
+
+// Final CV integrity gate (gap-fix §20): render blocking validation errors and
+// prevent bad output. Called when /api/assemble-cv returns 422.
+const _INTEGRITY_HELP = {
+  BASE_CV_ROLE_LOSS: 'A source employer/role was dropped or lost.',
+  BASE_CV_PROJECT_LOSS: 'A base project disappeared from the CV.',
+  BASE_CV_CERTIFICATION_LOSS: 'A certification disappeared from the CV.',
+  BASE_CV_EDUCATION_LOSS: 'An education record disappeared from the CV.',
+  BASE_SKILL_OVERWRITE: 'Base skills were overwritten (likely by JD keywords).',
+  ROLE_CONTENT_MISMATCH: 'Bullets may have moved to the wrong employer.',
+  UNSUPPORTED_TERM_LEAK: 'An unsupported JD requirement entered the CV.',
+  REVIEW_METADATA_LEAK: 'Review/ATS/version metadata leaked into the CV.'
+};
+
+function showIntegrityErrors(errors){
+  const box = document.getElementById('integrityErrors');
+  if(!box) return;
+  const list = (errors && errors.length) ? errors : [{code:'VALIDATION_FAILED', detail:'CV failed integrity validation.'}];
+  const items = list.map(e => {
+    const help = _INTEGRITY_HELP[e.code] || '';
+    return `<li><code>${escapeHtml(e.code)}</code> ${escapeHtml(e.detail || help)}</li>`;
+  }).join('');
+  box.innerHTML = `<div class="ie-title">⚠ Generation blocked — CV integrity check failed</div>
+    <ul>${items}</ul>
+    <div style="font-size:10px;color:var(--muted);margin-top:6px;">Fix the flagged issues (re-check approvals so no source role/project/cert/education/skill is lost and no unsupported term is included), then try again.</div>`;
+  box.hidden = false;
+  if(typeof toast === 'function') toast('Generation blocked — CV integrity check failed', true);
+}
+
+function clearIntegrityErrors(){
+  const box = document.getElementById('integrityErrors');
+  if(box){ box.hidden = true; box.innerHTML = ''; }
 }
 
 function renderComparisonRow(key, label, entry){
