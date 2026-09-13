@@ -2038,13 +2038,17 @@ MISSING KEYWORDS (supported & evidenced): ${missingKw}
 
 YOUR TASK — surgically insert ONLY supported keywords while keeping the CV IDENTICAL in structure:
 1. Keep the EXACT same layout: same sections, same order, same number of bullet points, same headings
-2. Reword existing bullets to naturally include missing keywords where the candidate's experience is relevant
-3. Only insert keywords that are evidenced in the original experience or current CV content
-4. If a "## KEY SKILLS" section exists, add missing keywords there. If not, add one after SUMMARY with a single line listing relevant skills
-5. Do NOT add new roles, new bullet points, or new sections (except KEY SKILLS if missing)
-6. Do NOT remove any content
-7. Do NOT change job titles, company names, dates, education, or certifications
-8. Do NOT invent or fabricate experience the candidate doesn't have (gap-fix §11)
+2. Keep ALL ROLES and employers — do NOT collapse or remove any role
+3. Keep ALL education, certifications, projects, and community entries
+4. Reword existing bullets to naturally include missing keywords where the candidate's experience is relevant
+5. Only insert keywords that are evidenced in the original experience or current CV content
+6. If a "## KEY SKILLS" section exists, add missing keywords there. If not, add one after SUMMARY with a single line listing relevant skills
+7. Do NOT add new roles, new bullet points, or new sections (except KEY SKILLS if missing)
+8. Do NOT remove any content
+9. Do NOT change job titles, company names, dates, education, or certifications
+10. Do NOT invent or fabricate experience the candidate doesn't have (gap-fix §11)
+
+CRITICAL: Return the COMPLETE CV with all sections and roles. Do not truncate or abbreviate.
 
 FORMAT: Return the FULL CV in markdown. Same # ## ### and - structure. Nothing else — no explanations.
 
@@ -2070,6 +2074,13 @@ Output the improved CV now:`;
         }
 
         if(refinedText && refinedText.length > 200){
+          // Validate that no roles were dropped during refinement (gap-fix §14)
+          const refinedCount = (refinedText.match(/^###\s+(.+?)\s+at\s+/gmi) || []).length;
+          const originalCount = (currentPackage.tailoredCV.match(/^###\s+(.+?)\s+at\s+/gmi) || []).length;
+          if(refinedCount < originalCount){
+            console.warn(`ATS refinement: role loss detected (original: ${originalCount}, refined: ${refinedCount}) — rejecting to preserve integrity`, {refinedCount, originalCount});
+            break;  // Halt refinement to prevent data loss
+          }
           currentPackage.tailoredCV = refinedText;
           atsResult = computeATSScore(jd, currentPackage.tailoredCV);
           currentPackage.atsResult = atsResult;
