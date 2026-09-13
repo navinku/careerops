@@ -230,6 +230,32 @@
   .cv-pe-accordion-body.open{display:block;}
   .cv-comparison-nochanges{padding:16px;text-align:center;color:var(--muted);font-size:12px;background:var(--panel-1);border-radius:6px;}
   .cv-comparison-loading{display:flex;align-items:center;justify-content:center;gap:8px;padding:24px;color:var(--muted);font-size:12px;}
+  /* ATS layout section grouping (per ATS_Friendly_CV_Checklist.md recommended section order) */
+  .cv-ats-section{margin-bottom:18px;}
+  .cv-ats-section-header{display:flex;align-items:baseline;gap:8px;padding:8px 10px;margin-bottom:10px;background:var(--panel-1);border-left:4px solid var(--teal);border-radius:4px;}
+  .cv-ats-section-header .sec-num{font-size:10px;font-weight:700;color:var(--teal);min-width:20px;}
+  .cv-ats-section-header .sec-title{font-size:12px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.5px;}
+  .cv-ats-section-header .sec-hint{font-size:10px;color:var(--muted);margin-left:auto;font-style:italic;}
+  .cv-comparison-legend{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;padding:0 12px;position:sticky;top:0;z-index:3;background:var(--panel-2);}
+  .cv-comparison-legend .legend-col{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:6px 8px;border-radius:4px;}
+  .cv-comparison-legend .legend-col.left{color:var(--muted);border-top:2px solid var(--muted);background:var(--panel-2);}
+  .cv-comparison-legend .legend-col.right{color:var(--teal);border-top:2px solid var(--teal);background:var(--panel-2);}
+  /* Sticky section header so context is retained while scrolling (spec §23) */
+  .cv-ats-section-header{position:sticky;top:36px;z-index:2;}
+  /* Status-badge state model (spec §4, §28): CHANGED / ADDED / REMOVED / UNCHANGED */
+  .cv-comparison-row .cat-badge.state{text-transform:uppercase;letter-spacing:.3px;}
+  .cv-comparison-row .cat-badge.state-changed{background:var(--teal);color:#000;}
+  .cv-comparison-row .cat-badge.state-added{background:var(--green);color:#000;}
+  .cv-comparison-row .cat-badge.state-removed{background:var(--red);color:#fff;}
+  .cv-comparison-row .cat-badge.state-unchanged{background:var(--muted);color:#fff;}
+  /* Mobile: stack Base → Recommended (spec §24). Do not force two narrow columns. */
+  @media(max-width:640px){
+    .cv-comparison-row{grid-template-columns:1fr;}
+    .cv-comparison-legend{display:none;}
+    .cv-comparison-col.original-col::before{content:"Base / Current CV";display:block;font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
+    .cv-comparison-col.suggested-col::before{content:"↓ Recommended (JD + ATS)";display:block;font-size:9px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
+    .cv-ats-section-header{top:0;}
+  }
 </style>
 </head>
 <body>
@@ -334,7 +360,7 @@
         <!-- CV COMPARISON & MERGE PANEL (ComparisonView) -->
         <div id="cvComparisonPanel" style="display:none;margin-top:20px;padding:16px;background:var(--panel-2);border-radius:8px;border:1px solid var(--border);">
           <div style="margin-bottom:16px;">
-            <h3 style="margin:0 0 8px 0;font-size:14px;font-weight:600;">📊 CV Tailoring Review — Category-by-Category Comparison</h3>
+            <h3 style="margin:0 0 8px 0;font-size:14px;font-weight:600;">📊 CV Tailoring Review — Base vs. Recommended, grouped by ATS layout section</h3>
             <div id="cvScoreBanner" class="cv-score-banner">
               <div class="score-item"><div class="score-label">Baseline</div><div class="score-value" id="cvScoreBaseline">—</div></div>
               <div class="score-arrow">→</div>
@@ -2092,9 +2118,9 @@ document.getElementById('rejectAllChangesBtn')?.addEventListener('click', ()=>{
 
 document.getElementById('smartAcceptBtn')?.addEventListener('click', ()=>{
   document.querySelectorAll('.cv-comparison-row.changed').forEach(row => {
-    const badge = row.querySelector('.cat-badge');
+    const badge = row.querySelector('.cat-badge.positive');
     const checkbox = row.querySelector('.comparison-checkbox');
-    if(badge && checkbox && badge.classList.contains('positive')){
+    if(badge && checkbox){
       checkbox.checked = true;
     }
   });
@@ -2451,7 +2477,22 @@ function renderBackendComparison(compareData){
     return;
   }
 
-  summary.innerHTML = `<strong>${total_changes}</strong> categor${total_changes === 1 ? 'y' : 'ies'} changed. Review and approve changes below.`;
+  // Change summary counts (spec §18): categories changed / added / removed / unchanged.
+  let cntChanged = 0, cntAdded = 0, cntRemoved = 0, cntUnchanged = 0;
+  for(const entry of Object.values(comparison)){
+    if(!entry || typeof entry !== 'object') continue;
+    const state = deriveChangeState(entry);
+    if(state === 'ADDED') cntAdded++;
+    else if(state === 'REMOVED') cntRemoved++;
+    else if(state === 'CHANGED') cntChanged++;
+    else cntUnchanged++;
+  }
+  const parts = [];
+  parts.push(`<strong>${cntChanged}</strong> changed`);
+  if(cntAdded) parts.push(`<strong>${cntAdded}</strong> added`);
+  if(cntRemoved) parts.push(`<strong>${cntRemoved}</strong> removed`);
+  parts.push(`<strong>${cntUnchanged}</strong> unchanged`);
+  summary.innerHTML = `${parts.join(' · ')} — review and approve recommendations below.`;
 
   // Render category rows
   let html = '';
@@ -2468,51 +2509,82 @@ function renderBackendComparison(compareData){
     }
   }
 
-  // Fixed category order
-  const CATEGORY_ORDER = ['heading', 'subheading', 'contact', 'summary', 'core_skills',
-    'professional_experience', 'certifications', 'education', 'community', 'languages'];
+  // Category display labels
   const CATEGORY_LABELS = {
-    heading: 'Heading', subheading: 'Subheading', contact: 'Contact',
-    summary: 'Professional Summary', core_skills: 'Core Skills',
-    professional_experience: 'Professional Experience (Header)', certifications: 'Certifications',
-    education: 'Education', community: 'Community Leadership', languages: 'Languages'
+    heading: 'Name', subheading: 'Professional Title', contact: 'Contact Information',
+    summary: 'Professional Summary', core_skills: 'Core Technical Skills',
+    professional_experience: 'Experience Section (Header)', certifications: 'Certifications',
+    education: 'Education', community: 'Additional Information', languages: 'Languages'
   };
 
-  // Render top-level categories (except PE roles which get accordion)
-  for(const key of CATEGORY_ORDER){
-    if(!comparison[key]) continue;
-    const entry = comparison[key];
-    const label = CATEGORY_LABELS[key] || key;
-    html += renderComparisonRow(key, label, entry);
-  }
+  // ATS checklist "Recommended section order" (ATS_Friendly_CV_Checklist.md §2).
+  // Each layout section groups one or more category keys. PE roles nest under
+  // the Professional Experience section.
+  const ATS_LAYOUT_SECTIONS = [
+    { num: '1', title: 'Header', hint: 'Name · Title · Contact', cats: ['heading', 'subheading', 'contact'] },
+    { num: '2', title: 'Professional Summary', hint: '3–5 concise lines', cats: ['summary'] },
+    { num: '3', title: 'Core Technical Skills', hint: 'Categorized, JD-relevant first', cats: ['core_skills'] },
+    { num: '4', title: 'Professional Experience', hint: 'Action + tech + scope + result', cats: ['professional_experience'], includePeRoles: true },
+    { num: '5', title: 'Certifications', hint: 'Exact names, JD-relevant', cats: ['certifications'] },
+    { num: '6', title: 'Education', hint: 'Degree · Institution · Year', cats: ['education'] },
+    { num: '7', title: 'Additional Information', hint: 'Community · Languages · Other', cats: ['community', 'languages'] },
+  ];
 
-  // Render PE roles in an accordion
-  if(peRoleKeys.length > 0){
-    // Sort role keys by role index
-    peRoleKeys.sort((a, b) => {
-      const ai = parseInt(a.replace(PE_PREFIX + 'role_', ''), 10);
-      const bi = parseInt(b.replace(PE_PREFIX + 'role_', ''), 10);
-      return ai - bi;
-    });
+  // Two-column legend: left = base/current CV, right = recommended per JD + ATS
+  html += `<div class="cv-comparison-legend">
+    <div class="legend-col left">Base / Current CV</div>
+    <div class="legend-col right">Recommended (per JD + ATS)</div>
+  </div>`;
 
-    const changedRoles = peRoleKeys.filter(k => comparison[k].changed);
-    html += `<div class="cv-pe-accordion">
-      <div class="cv-pe-accordion-header" onclick="togglePeAccordion(this)">
-        <span class="arrow">▶</span>
-        Professional Experience Roles (${changedRoles.length} of ${peRoleKeys.length} changed)
-      </div>
-      <div class="cv-pe-accordion-body">`;
+  // Sort PE role keys by role index once (used inside the Experience section)
+  peRoleKeys.sort((a, b) => {
+    const ai = parseInt(a.replace(PE_PREFIX + 'role_', ''), 10);
+    const bi = parseInt(b.replace(PE_PREFIX + 'role_', ''), 10);
+    return ai - bi;
+  });
 
-    for(const key of peRoleKeys){
+  for(const section of ATS_LAYOUT_SECTIONS){
+    // Determine whether this section has anything to render
+    const presentCats = section.cats.filter(k => comparison[k]);
+    const hasPeRoles = section.includePeRoles && peRoleKeys.length > 0;
+    if(presentCats.length === 0 && !hasPeRoles) continue;
+
+    let sectionHtml = '';
+
+    // Render each top-level category belonging to this section
+    for(const key of presentCats){
       const entry = comparison[key];
-      // Extract role title from the content for labeling
-      let roleLabel = key.replace(PE_PREFIX, '').replace('_', ' ');
-      const titleMatch = (entry.suggested_content || entry.original_content || '').match(/^###\s*(.+)/m);
-      if(titleMatch) roleLabel = titleMatch[1].trim();
-      html += renderComparisonRow(key, roleLabel, entry);
+      const label = CATEGORY_LABELS[key] || key;
+      sectionHtml += renderComparisonRow(key, label, entry);
     }
 
-    html += `</div></div>`;
+    // Render PE roles (nested accordion) inside the Experience section
+    if(hasPeRoles){
+      const changedRoles = peRoleKeys.filter(k => comparison[k].changed);
+      sectionHtml += `<div class="cv-pe-accordion">
+        <div class="cv-pe-accordion-header" onclick="togglePeAccordion(this)">
+          <span class="arrow">▶</span>
+          Individual Roles (${changedRoles.length} of ${peRoleKeys.length} changed)
+        </div>
+        <div class="cv-pe-accordion-body">`;
+      for(const key of peRoleKeys){
+        const entry = comparison[key];
+        let roleLabel = key.replace(PE_PREFIX, '').replace('_', ' ');
+        const titleMatch = (entry.suggested_content || entry.original_content || '').match(/^###\s*(.+)/m);
+        if(titleMatch) roleLabel = titleMatch[1].trim();
+        sectionHtml += renderComparisonRow(key, roleLabel, entry);
+      }
+      sectionHtml += `</div></div>`;
+    }
+
+    html += `<div class="cv-ats-section">
+      <div class="cv-ats-section-header">
+        <span class="sec-num">${section.num}</span>
+        <span class="sec-title">${escapeHtml(section.title)}</span>
+        <span class="sec-hint">${escapeHtml(section.hint)}</span>
+      </div>
+      ${sectionHtml}
+    </div>`;
   }
 
   content.innerHTML = html;
@@ -2543,20 +2615,24 @@ function renderComparisonRow(key, label, entry){
     return `<div class="cv-comparison-row ${changedClass}" data-cat-key="${escapeHtml(key)}">
       <div class="cat-header">
         <span class="cat-name">${escapeHtml(label)}</span>
-        <span class="cat-badge neutral">unchanged</span>
+        <span class="cat-badge state state-unchanged">UNCHANGED</span>
       </div>
       <div class="cv-comparison-col original-col">
-        <div class="cv-comparison-col-label">Content</div>
+        <div class="cv-comparison-col-label">Base / Current CV</div>
         ${escapeHtml(truncateForDisplay(original_content, 100))}
       </div>
       <div class="cv-comparison-col suggested-col" style="opacity:.5;">
-        <div class="cv-comparison-col-label">No change</div>
-        <span style="color:var(--muted);font-style:italic;">Same as original</span>
+        <div class="cv-comparison-col-label">Recommended (JD + ATS)</div>
+        <span style="color:var(--muted);font-style:italic;">Same as base — no change recommended</span>
       </div>
     </div>`;
   }
 
-  // Changed category - show side-by-side with checkbox
+  // Changed category - show side-by-side with checkbox.
+  // State badge (spec §4/§28) is unambiguous: ADDED / REMOVED / CHANGED.
+  const state = deriveChangeState(entry);
+  const stateClass = 'state-' + state.toLowerCase();
+  // ATS impact badge is a secondary, explained numeric badge (not an ambiguous word).
   const badgeClass = score_impact > 0 ? 'positive' : score_impact < 0 ? 'negative' : 'neutral';
   const badgeText = score_impact > 0 ? `+${score_impact}` : score_impact < 0 ? `${score_impact}` : '±0';
 
@@ -2564,17 +2640,28 @@ function renderComparisonRow(key, label, entry){
     <div class="cat-header">
       <input type="checkbox" class="comparison-checkbox" data-cat-key="${escapeHtml(key)}">
       <span class="cat-name">${escapeHtml(label)}</span>
+      <span class="cat-badge state ${stateClass}">${state}</span>
       <span class="cat-badge ${badgeClass}">${badgeText} ATS</span>
     </div>
     <div class="cv-comparison-col original-col">
-      <div class="cv-comparison-col-label">Original</div>
+      <div class="cv-comparison-col-label">Base / Current CV</div>
       ${escapeHtml(truncateForDisplay(original_content, 200))}
     </div>
     <div class="cv-comparison-col suggested-col">
-      <div class="cv-comparison-col-label">Suggested</div>
+      <div class="cv-comparison-col-label">Recommended (JD + ATS)</div>
       ${escapeHtml(truncateForDisplay(suggested_content, 200))}
     </div>
   </div>`;
+}
+
+// Derive an unambiguous review state from content presence (spec §4/§28).
+function deriveChangeState(entry){
+  const hasBase = !!(entry.original_content && entry.original_content.trim());
+  const hasReco = !!(entry.suggested_content && entry.suggested_content.trim());
+  if(!entry.changed) return 'UNCHANGED';
+  if(!hasBase && hasReco) return 'ADDED';
+  if(hasBase && !hasReco) return 'REMOVED';
+  return 'CHANGED';
 }
 
 function truncateForDisplay(text, maxLen){
